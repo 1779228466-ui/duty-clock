@@ -35,10 +35,12 @@
 | 组件 | 选型 |
 |------|------|
 | 推理引擎 | NCNN CPU (`useVulkan=false`) |
-| 模型 | yolo26n-pose-320 (NCNN param/bin) |
+| 模型 | yolo26s-pose-320 (NCNN param/bin, 11.8M参数) |
 | 输入尺寸 | 320×320 (默认) |
-| JNI库 | libposemouse_ncnn.so (NCNN+KCP) |
+| JNI库 | libcposemouse_ncnn.so (NCNN+KCP) |
 | NCNN预编译库 | ncnn-20260526-android (纯CPU版，无Vulkan) |
+| NCNN线程数 | 4 (绑高频簇CPU4-7) |
+| NCNN优化 | FP16存储+算术, openmp_blocktime=0 |
 | **鼠标算法** | **AdaptivePidController (自适应PID) — 唯一算法** |
 | 鼠标控制 | BluetoothHidMouse (蓝牙HID) |
 | 帧传输 | UDP/KCP (H.264编码) |
@@ -271,6 +273,37 @@ D:\HuaWei\CPU_pose\CPoseMouse\          (独立项目根目录)
 - 输出：56通道 (4 bbox + 1 obj_conf + 17×3 keypoints)，2100 anchors (320×320)
 - COCO 17关键点：0-4头部, 5-6肩膀, 7-8肘部, 9-10手腕, 11-12髋部, 13-14膝盖, 15-16脚踝
 
+### yolo26s-pose模型信息
+
+- small级，参数量11.8M（nano级2.3M的5倍）
+- GFLOPs: 23.9 (320×320)
+- 精度显著高于nano：COCO pose AP约高5-8个点
+- 代价：推理时间约为nano的5-6倍
+
+---
+
+## CPU推理优化方案（保守方案）
+
+> 目标：yolo26s-pose-320 从125ms降到30ms以下
+
+### 已实施的优化
+
+| 优化项 | 具体做法 | 预期加速 |
+|--------|---------|---------|
+| 4线程+绑核 | `num_threads=4`, `sched_setaffinity`绑CPU4-7(X4+3×A720@2.85G) | 3-3.5x |
+| FP16算术 | `use_fp16_arithmetic=true`，X4/A720原生FP16 FMLA | 1.3-1.5x |
+| OMP优化 | `openmp_blocktime=0`, `OMP_WAIT_POLICY=PASSIVE` | 减少spin wait |
+| 环境变量 | `KMP_AFFINITY=disabled`, `OMP_PROC_BIND=false` | 防止SIGABRT |
+
+### 后备优化（如保守方案不达标）
+
+| 优化项 | 预期加速 | 难度 |
+|--------|---------|------|
+| INT8量化(混合精度) | 2-3x | 中 |
+| 自编译NCNN(armv8.2+fp16+dotprod) | 1.1-1.2x | 中 |
+| 降低分辨率(320→256) | 1.5-2x | 低 |
+| YUV→RGB NEON优化 | 节省2-5ms | 中 |
+
 ---
 
 ## 进展记录
@@ -285,32 +318,37 @@ D:\HuaWei\CPU_pose\CPoseMouse\          (独立项目根目录)
 - [x] 验证：assembleDebug编译通过(BUILD SUCCESSFUL)
 - [x] 推送到GitHub: https://github.com/1779228466-ui/cpu_mouse
 
-### [ ] 阶段1：核心代码移植
-- [ ] 移植InferenceEngine.kt (接口+数据类)
-- [ ] 移植NcnnEngine.kt (仅保留NCNN CPU逻辑)
-- [ ] 移植posemouse_ncnn_jni.cpp + ikcp.c/h
-- [ ] 移植InferenceLoop.kt (集成速度前馈)
-- [ ] 移植BluetoothHidMouse.kt
-- [ ] 移植AdaptivePidController.kt (唯一鼠标算法，参数对齐PC端)
+### [x] 阶段1：核心代码移植
+- [x] 移植全部Kotlin核心文件（13个）+ InferenceEngine接口
+- [x] 移植C++ JNI（cposemouse_ncnn_jni.cpp + ikcp.c/h）
+- [x] 移植InferenceService + MainActivity + UI theme
+- [x] 包名改为com.CPoseMouse，JNI函数名适配
+- [x] 移除litert/neuron_direct/Vulkan引擎，仅NCNN+CPU
+- [x] 移除AlphaBetaPD/HxPD/KalmanMultiTracker，仅自适应PID
+- [x] 代码规范性检查并修复41个问题（24个已修复）
+- [x] 验证：编译通过，安装到手机运行正常
+
+### [x] 阶段2：模型替换与安装测试
+- [x] 替换模型为yolo26s-pose-320（ultralytics导出NCNN格式）
+- [x] 默认inputSize改为320
+- [x] 安装测试：NCNN模型加载成功，蓝牙HID自动连接PC
+- [x] Benchmark基线：yolo26s-pose-320, 1线程FP32, **125ms/帧(8 FPS)**
+
+### [ ] 阶段3：CPU推理性能优化（保守方案）
+- [x] 验证天玑9300 CPU拓扑：CPU0-3=A720@2.0G, CPU4-6=A720@2.85G, CPU7=X4@3.25G
+- [x] 启用4线程 + sched_setaffinity绑高频簇(CPU4-7) + openmp_blocktime=0
+- [x] 启用FP16算术(use_fp16_arithmetic=true)，X4/A720原生FP16 FMLA
+- [x] 移除OMP_NUM_THREADS=1限制，保留KMP_AFFINITY=disabled
+- [ ] 实测benchmark（待设备重连）
+- [ ] 如不达标：INT8量化 / 自编译NCNN / 降低分辨率
+
+### [ ] 阶段4：PC端增强功能移植
 - [ ] 新增AdaptiveEmaSmoother.kt (自适应EMA平滑，从PC端移植)
 - [ ] 新增AutoTuner.kt (自动调参器，从PC端移植)
 - [ ] 新增FireController.kt (射击控制，从PC端移植)
-- [ ] 移植BodyParts.kt
-- [ ] 移植UdpFrameReceiver.kt + H264Decoder.kt
-- [ ] 移植ScreenCapture.kt
-- [ ] 移植AppLog.kt
-- [ ] 移植InferenceService.kt (简化：仅ncnn_cpu引擎)
-- [ ] 移植InferenceServiceHolder.kt
-- [ ] 移植LowTextureSuppressor.kt
-- [ ] 移植UdpTargetSender.kt
-- [ ] 验证：编译通过，生成APK
+- [ ] InferenceLoop集成速度前馈
 
-### [ ] 阶段2：UI移植
-- [ ] 移植MainActivity.kt (移除引擎选择UI，移除算法切换UI，仅自适应PID)
-- [ ] 移植res资源文件
-- [ ] 验证：UI正常显示
-
-### [ ] 阶段3：功能验证
+### [ ] 阶段5：功能验证
 - [ ] 蓝牙HID连接测试
 - [ ] NCNN CPU推理测试 (截屏模式)
 - [ ] UDP/KCP帧接收测试
@@ -319,10 +357,11 @@ D:\HuaWei\CPU_pose\CPoseMouse\          (独立项目根目录)
 - [ ] 性能基准测试
 - [ ] AutoTuner自动调参验证
 
-### [ ] 阶段4：优化
+### [ ] 阶段6：深度优化
 - [ ] 全局变量消除 (按"全局变量消除方案.md"执行)
-- [ ] NCNN多线程探索 (1线程→4线程+大核绑定)
 - [ ] H264Decoder YUV→BGRA NEON优化
+- [ ] INT8量化（混合精度，backbone INT8 + pose head FP32）
+- [ ] 自编译NCNN（-march=armv8.2-a+fp16+dotprod -O3 -flto）
 - [ ] 蓝牙HID设备名伪装
 - [ ] 自适应PID参数微调（基于AutoTuner实测数据）
 
@@ -334,9 +373,29 @@ D:\HuaWei\CPU_pose\CPoseMouse\          (独立项目根目录)
 - **日期**: 原项目已遇到
 - **现象**: NCNN多线程推理时，OMP affinity导致SIGABRT崩溃
 - **原因**: MediaTek天玑CPU拓扑与Intel OpenMP runtime默认affinity策略不兼容
-- **当前解决**: 强制单线程 + `KMP_AFFINITY=disabled` + sigsetjmp捕获SIGABRT
-- **待验证**: 4线程 + `KMP_AFFINITY=disabled` + `OMP_PROC_BIND=false` 是否安全
-- **状态**: 绕过（单线程），待优化
+- **当前解决**: `KMP_AFFINITY=disabled` + `OMP_PROC_BIND=false` + `OMP_WAIT_POLICY=PASSIVE` + sigsetjmp捕获SIGABRT
+- **已验证**: 4线程 + 上述环境变量 + sched_setaffinity绑高频簇，编译通过
+- **状态**: 已从1线程升级到4线程，待实测验证
+
+### 问题#4: yolo26s-pose-320 CPU推理太慢
+- **日期**: 2026-06-29
+- **现象**: yolo26s-pose-320在1线程FP32下125ms/帧(8 FPS)，无法实时跟踪
+- **原因**: yolo26s参数量11.8M（yolo26n仅2.3M），320分辨率计算量大
+- **优化方案（保守方案，预期3-5x加速）**:
+  1. ✅ 4线程 + sched_setaffinity绑高频簇(CPU4-7: X4@3.25G + 3×A720@2.85G)
+  2. ✅ FP16算术(use_fp16_arithmetic=true)，X4/A720原生FP16 FMLA指令
+  3. ✅ openmp_blocktime=0 + OMP_WAIT_POLICY=PASSIVE
+  4. ⏳ INT8量化(混合精度) — 如保守方案不达标
+  5. ⏳ 自编译NCNN(-march=armv8.2-a+fp16+dotprod) — 如保守方案不达标
+- **预期**: 125ms → 25-35ms (4线程+FP16)
+- **状态**: 代码已修改，编译通过，待实测
+
+### 天玑9300 CPU拓扑（实测确认）
+- CPU0-3: Cortex-A720 @ 2.0GHz（中频簇）
+- CPU4-6: Cortex-A720 @ 2.85GHz（高频簇）
+- CPU7: Cortex-X4 @ 3.25GHz（超大核）
+- 全大核架构，无小核，`set_cpu_powersave(1)`无效
+- sched_setaffinity绑定CPU4-7为推理线程最优选择
 
 ### 问题#2: H264Decoder YUV→BGRA转换慢
 - **日期**: 原项目已知
@@ -422,7 +481,8 @@ D:\HuaWei\CPU_pose\CPoseMouse\          (独立项目根目录)
 |------|---------|-----|------|
 | yolo26n-pose-160, NCNN CPU, 1线程 | ~7ms | ~140 | 原项目数据 |
 | yolo26n-pose-320, NCNN CPU, 1线程 | ~15-25ms(估) | ~40-67(估) | 面积4倍于160 |
-| yolo26n-pose-320, NCNN CPU, 4线程 | 待测 | 待测 | 大核绑定策略 |
+| yolo26s-pose-320, NCNN CPU, 1线程FP32 | **125ms** | **8** | **实测，当前基线** |
+| yolo26s-pose-320, NCNN CPU, 4线程+FP16 | ~25-35ms(估) | ~28-40(估) | 待实测 |
 
 ---
 
@@ -440,6 +500,8 @@ D:\HuaWei\CPU_pose\CPoseMouse\          (独立项目根目录)
 | | 移植AutoTuner | 自动优化PID参数，避免手动调参 |
 | | 移植FireController | 射击控制是核心功能 |
 | | NCNN默认1线程 | 原项目因OMP SIGABRT而限制，后续可尝试4线程+大核绑定 |
+| | NCNN升级到4线程+FP16+绑高频簇 | 保守方案预期3-5x加速(125ms→25-35ms) |
+| | 替换模型为yolo26s-pose-320 | 精度显著高于nano，代价是推理慢5-6x |
 | | USB共享网络场景用UDP | 丢包率<0.1%，延迟比KCP低1-2ms |
 | | WiFi场景用KCP | 丢包率1-5%，KCP自动重传更稳定 |
 | | 蓝牙HID设备名需伪装 | "PoseMouse"易被反作弊标记 |

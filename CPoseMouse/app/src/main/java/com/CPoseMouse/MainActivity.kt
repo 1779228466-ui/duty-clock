@@ -122,7 +122,7 @@ fun MainApp() {
             serviceIntent.putExtra("resultCode", result.resultCode)
             serviceIntent.putExtra("data", result.data!!)
             serviceIntent.putExtra("engine", engineType)
-            serviceIntent.putExtra("inputSize", 160)
+            serviceIntent.putExtra("inputSize", 320)
             serviceIntent.putExtra("useUdp", useUdpMode)
             context.startForegroundService(serviceIntent)
             isRunning = true; statusText = "服务启动中..."
@@ -233,7 +233,7 @@ fun MonitorScreen(
                             if (useUdpMode) {
                                 val serviceIntent = Intent(context, com.CPoseMouse.service.InferenceService::class.java)
                                 serviceIntent.putExtra("engine", engineType)
-            serviceIntent.putExtra("inputSize", 160)
+            serviceIntent.putExtra("inputSize", 320)
                                 serviceIntent.putExtra("useUdp", true)
                                 context.startForegroundService(serviceIntent)
                                 onRunningChange(true); onStatusChange("UDP模式启动中...")

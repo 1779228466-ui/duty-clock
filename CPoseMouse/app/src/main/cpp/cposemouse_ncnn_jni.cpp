@@ -19,6 +19,7 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <sched.h>
 #include <cerrno>
 #include <cstring>
 #include "ikcp.h"
@@ -40,9 +41,8 @@ static void abort_handler(int sig) {
 static void suppress_omp_affinity() {
     setenv("KMP_AFFINITY", "disabled", 1);
     setenv("OMP_PROC_BIND", "false", 1);
-    setenv("OMP_NUM_THREADS", "1", 1);
+    setenv("OMP_WAIT_POLICY", "PASSIVE", 1);
     setenv("KMP_SETTINGS", "0", 1);
-    omp_set_num_threads(1);
     omp_set_dynamic(0);
 }
 
@@ -68,7 +68,7 @@ JNIEXPORT jint JNI_OnLoad(JavaVM* vm, void* reserved) {
     g_abort_expected = 0;
     sigaction(SIGABRT, &old_sa, nullptr);
 
-    LOGI("JNI_OnLoad: OMP_NUM_THREADS=1, affinity suppressed");
+    LOGI("JNI_OnLoad: OMP threads=4, affinity suppressed, powersave=2");
     return JNI_VERSION_1_6;
 }
 
@@ -148,13 +148,24 @@ Java_com_CPoseMouse_core_NcnnEngine_nativeLoadModel(JNIEnv* env, jclass clazz, j
     g_target_size = input_size;
 
     ncnn::Option opt;
-    opt.num_threads = 1;
+    opt.num_threads = 4;
+    opt.openmp_blocktime = 0;
 #if NCNN_VULKAN
     opt.use_vulkan_compute = g_use_gpu;
 #endif
     opt.use_fp16_packed = true;
     opt.use_fp16_storage = true;
+    opt.use_fp16_arithmetic = true;
     opt.use_int8_storage = true;
+
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(4, &cpuset);
+    CPU_SET(5, &cpuset);
+    CPU_SET(6, &cpuset);
+    CPU_SET(7, &cpuset);
+    sched_setaffinity(0, sizeof(cpuset), &cpuset);
+    LOGI("Bound to high-freq cluster CPU4-7 (X4@3.25G + 3xA720@2.85G)");
 
 
 
@@ -169,11 +180,11 @@ Java_com_CPoseMouse_core_NcnnEngine_nativeLoadModel(JNIEnv* env, jclass clazz, j
         param_name = "yolo26n-pose-160.param";
         bin_name = "yolo26n-pose-160.bin";
     } else if (input_size == 320) {
-        param_name = "yolo26n-pose-320.param";
-        bin_name = "yolo26n-pose-320.bin";
+        param_name = "yolo26s-pose-320.param";
+        bin_name = "yolo26s-pose-320.bin";
     } else {
-        param_name = "yolo26n-pose-320.param";
-        bin_name = "yolo26n-pose-320.bin";
+        param_name = "yolo26s-pose-320.param";
+        bin_name = "yolo26s-pose-320.bin";
     }
 
     FILE* pf = nullptr;
@@ -308,7 +319,7 @@ Java_com_CPoseMouse_core_NcnnEngine_nativeDetectRawRgba(JNIEnv* env, jclass claz
     jbyteArray rgba_data, jint width, jint height, jfloat conf_thresh) {
     if (!g_net) return nullptr;
 
-    omp_set_num_threads(1);
+
     omp_set_dynamic(0);
 
     jbyte* data = env->GetByteArrayElements(rgba_data, nullptr);

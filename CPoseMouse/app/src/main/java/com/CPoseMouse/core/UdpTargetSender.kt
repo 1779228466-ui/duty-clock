@@ -6,7 +6,7 @@ import java.net.InetAddress
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
-class UdpTargetSender(private val pcIp: String = "10.181.9.68", private val pcPort: Int = 19878) {
+class UdpTargetSender(private val pcIp: String = "0.0.0.0", private val pcPort: Int = DEFAULT_PORT) {
     @Volatile var isRunning = false
         private set
     @Volatile var sendCount = 0L
@@ -57,5 +57,8 @@ class UdpTargetSender(private val pcIp: String = "10.181.9.68", private val pcPo
         socket = null
     }
 
-    companion object { private const val TAG = "UdpTargetSender" }
+    companion object {
+        private const val TAG = "UdpTargetSender"
+        private const val DEFAULT_PORT = 19878
+    }
 }

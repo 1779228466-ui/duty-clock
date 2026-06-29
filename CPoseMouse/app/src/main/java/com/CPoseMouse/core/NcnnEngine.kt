@@ -71,6 +71,27 @@ class NcnnEngine(private val useVulkan: Boolean = false, private val inputSize: 
     }
 
 
+    private fun parseDetectResult(result: FloatArray, scaleX: Float, scaleY: Float): List<PoseResult> {
+        if (result.size < 2) return emptyList()
+        val channels = result[0].toInt()
+        val count = result[1].toInt()
+        val poses = mutableListOf<PoseResult>()
+        var idx = 2
+        while (idx < result.size) {
+            val i = result[idx++].toInt()
+            val objConf = result[idx++]
+            val kps = mutableListOf<Keypoint>()
+            for (k in 0 until 17) {
+                val base = 5 + k * 3
+                if (base + 2 < channels && idx + 2 < result.size) {
+                    kps.add(Keypoint(result[idx++] * scaleX, result[idx++] * scaleY, result[idx++]))
+                }
+            }
+            poses.add(PoseResult(objConf, kps))
+        }
+        return poses
+    }
+
     override fun detect(bitmap: Bitmap, confThresh: Float): List<PoseResult> {
         if (!loaded) return emptyList()
         try {
@@ -86,28 +107,9 @@ class NcnnEngine(private val useVulkan: Boolean = false, private val inputSize: 
                 AppLog.i(TAG, String.format("total=%.1fms Vulkan=%b", lastInferMsVal, useVulkan))
             }
 
-            if (result.size < 2) return emptyList()
-            val channels = result[0].toInt()
-            val count = result[1].toInt()
-
             val scaleX = w.toFloat() / inputSize
             val scaleY = h.toFloat() / inputSize
-
-            val poses = mutableListOf<PoseResult>()
-            var idx = 2
-            while (idx < result.size) {
-                val i = result[idx++].toInt()
-                val objConf = result[idx++]
-                val kps = mutableListOf<Keypoint>()
-                for (k in 0 until 17) {
-                    val base = 5 + k * 3
-                    if (base + 2 < channels && idx + 2 < result.size) {
-                        kps.add(Keypoint(result[idx++] * scaleX, result[idx++] * scaleY, result[idx++]))
-                    }
-                }
-                poses.add(PoseResult(objConf, kps))
-            }
-            return poses
+            return parseDetectResult(result, scaleX, scaleY)
         } catch (e: Exception) {
             AppLog.e(TAG, "detect failed", e)
             return emptyList()
@@ -134,28 +136,9 @@ class NcnnEngine(private val useVulkan: Boolean = false, private val inputSize: 
                 AppLog.i(TAG, String.format("raw=%.1fms Vulkan=%b", lastInferMsVal, useVulkan))
             }
 
-            if (result.size < 2) return emptyList()
-            val channels = result[0].toInt()
-            val count = result[1].toInt()
-
             val scaleX = w.toFloat() / inputSize
             val scaleY = h.toFloat() / inputSize
-
-            val poses = mutableListOf<PoseResult>()
-            var idx = 2
-            while (idx < result.size) {
-                val i = result[idx++].toInt()
-                val objConf = result[idx++]
-                val kps = mutableListOf<Keypoint>()
-                for (k in 0 until 17) {
-                    val base = 5 + k * 3
-                    if (base + 2 < channels && idx + 2 < result.size) {
-                        kps.add(Keypoint(result[idx++] * scaleX, result[idx++] * scaleY, result[idx++]))
-                    }
-                }
-                poses.add(PoseResult(objConf, kps))
-            }
-            return poses
+            return parseDetectResult(result, scaleX, scaleY)
         } catch (e: Exception) {
             AppLog.e(TAG, "detectRawRgba failed", e)
             return emptyList()

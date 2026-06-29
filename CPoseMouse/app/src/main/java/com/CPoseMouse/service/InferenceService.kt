@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
+import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
@@ -58,9 +59,14 @@ class InferenceService : Service() {
         if (useUdp) {
             startUdpMode(engineType, inputSize)
         } else {
-            val resultCode = intent?.getIntExtra("resultCode", Activity.RESULT_CANCELED) ?: Activity.RESULT_CANCELED
-            val data = intent?.getParcelableExtra<android.content.Intent>("data")
-            if (resultCode == Activity.RESULT_CANCELED || data == null) {
+            val resultCode = intent?.getIntExtra("resultCode", android.app.Activity.RESULT_CANCELED) ?: android.app.Activity.RESULT_CANCELED
+            val data = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                intent?.getParcelableExtra("data", Intent::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                intent?.getParcelableExtra<Intent>("data")
+            }
+            if (resultCode == android.app.Activity.RESULT_CANCELED || data == null) {
                 AppLog.e(TAG, "Invalid MediaProjection data")
                 stopSelf()
                 return START_NOT_STICKY
@@ -137,18 +143,19 @@ class InferenceService : Service() {
 
         val proj = projection!!
         val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-        val dm = android.util.DisplayMetrics()
-        wm.defaultDisplay.getRealMetrics(dm)
+        val metrics = android.util.DisplayMetrics()
+        @Suppress("DEPRECATION")
+        wm.defaultDisplay.getRealMetrics(metrics)
 
         Thread {
 
-            val sc = ScreenCapture(proj, dm.widthPixels, dm.heightPixels)
+            val sc = ScreenCapture(proj, metrics.widthPixels, metrics.heightPixels)
             capture = sc
             InferenceServiceHolder.capture = sc
 
 
             sc.start()
-            AppLog.i(TAG, "ScreenCapture started ${dm.widthPixels}x${dm.heightPixels}")
+            AppLog.i(TAG, "ScreenCapture started ${metrics.widthPixels}x${metrics.heightPixels}")
 
             val det = NcnnEngine(useVulkan = false, inputSize = inputSize)
             engine = det
@@ -183,6 +190,7 @@ class InferenceService : Service() {
 
     override fun onDestroy() {
         loop?.running = false
+        loop?.udpTargetSender?.stop()
         udpReceiver?.stop()
         InferenceServiceHolder.loop = null
         InferenceServiceHolder.adaptivePidController = null
@@ -221,4 +229,3 @@ class InferenceService : Service() {
     }
 }
 
-private typealias Activity = android.app.Activity

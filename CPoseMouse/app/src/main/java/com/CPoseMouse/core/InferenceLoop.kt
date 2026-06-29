@@ -38,7 +38,7 @@ class InferenceLoop(
     private val pointPaint = Paint().apply { color = Color.RED; strokeWidth = 4f; style = Paint.Style.FILL }
     private val targetPaint = Paint().apply { color = Color.YELLOW; strokeWidth = 3f; style = Paint.Style.FILL }
 
-    private val SKELETON_CONNECTIONS = arrayOf(
+    private val skeletonConnections = arrayOf(
         intArrayOf(0,1), intArrayOf(0,2), intArrayOf(1,3), intArrayOf(2,4),
         intArrayOf(5,6), intArrayOf(5,7), intArrayOf(7,9), intArrayOf(6,8), intArrayOf(8,10),
         intArrayOf(5,11), intArrayOf(6,12), intArrayOf(11,12),
@@ -62,7 +62,8 @@ class InferenceLoop(
         var fpsTime = System.nanoTime()
         var lastFrameVersion: Long = -1
 
-        while (running) {
+        try {
+            while (running) {
             if (useUdpMode) {
                 if (!runUdpFrame()) {
                     Thread.sleep(1)
@@ -86,7 +87,7 @@ class InferenceLoop(
                     continue
                 }
 
-                var poses = detector.detect(cropped, 0.6f)
+                var poses = detector.detect(cropped, confThreshold)
 
                 if (useLowTexture && poses.isNotEmpty()) {
                     try {
@@ -105,6 +106,13 @@ class InferenceLoop(
             if (now - fpsTime > 1e9) {
                 fps = frameCount; frameCount = 0; fpsTime = now
             }
+        }
+        } finally {
+            reusableBitmap?.recycle()
+            reusableBitmap = null
+            inferBitmap?.recycle()
+            inferBitmap = null
+            latestFrameBitmap = null
         }
     }
 
@@ -177,7 +185,7 @@ class InferenceLoop(
         val currentPoses = latestPoses
         for (pose in currentPoses) {
             val kps = pose.keypoints
-            for (conn in SKELETON_CONNECTIONS) {
+            for (conn in skeletonConnections) {
                 val a = kps.getOrNull(conn[0])
                 val b = kps.getOrNull(conn[1])
                 if (a != null && b != null && a.conf > 0.3f && b.conf > 0.3f) {
@@ -200,7 +208,7 @@ class InferenceLoop(
         frameVersion++
 
         } else {
-            latestFrameBitmap = null
+
         }
         val t5 = System.nanoTime()
 

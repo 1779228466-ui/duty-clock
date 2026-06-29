@@ -211,6 +211,34 @@ Java_com_CPoseMouse_core_NcnnEngine_nativeLoadModel(JNIEnv* env, jclass clazz, j
     return JNI_TRUE;
 }
 
+static void extract_results(ncnn::Mat& out, float conf_thresh, std::vector<float>& results) {
+    int channels = out.h;
+    int count = out.w;
+    results.reserve(count * 3 + 2);
+    results.push_back((float)channels);
+    results.push_back((float)count);
+    for (int i = 0; i < count; i++) {
+        float obj_conf = ((float*)out.data)[4 * count + i];
+        if (obj_conf < conf_thresh) continue;
+        results.push_back((float)i);
+        results.push_back(obj_conf);
+        for (int k = 0; k < 17; k++) {
+            int base = 5 + k * 3;
+            if (base + 2 < channels) {
+                results.push_back(((float*)out.data)[base * count + i]);
+                results.push_back(((float*)out.data)[(base + 1) * count + i]);
+                results.push_back(((float*)out.data)[(base + 2) * count + i]);
+            }
+        }
+    }
+}
+
+static jfloatArray results_to_array(JNIEnv* env, std::vector<float>& results) {
+    jfloatArray arr = env->NewFloatArray(results.size());
+    env->SetFloatArrayRegion(arr, 0, results.size(), results.data());
+    return arr;
+}
+
 extern "C" JNIEXPORT jfloatArray JNICALL
 Java_com_CPoseMouse_core_NcnnEngine_nativeDetect(JNIEnv* env, jclass clazz,
     jintArray pixels_, jint width, jint height, jfloat conf_thresh) {
@@ -237,32 +265,9 @@ Java_com_CPoseMouse_core_NcnnEngine_nativeDetect(JNIEnv* env, jclass clazz,
     ncnn::Mat out;
     ex.extract("out0", out);
 
-    int channels = out.h;
-    int count = out.w;
-
     std::vector<float> results;
-    results.reserve(count * 3 + 2);
-    results.push_back((float)channels);
-    results.push_back((float)count);
-
-    for (int i = 0; i < count; i++) {
-        float obj_conf = ((float*)out.data)[4 * count + i];
-        if (obj_conf < conf_thresh) continue;
-        results.push_back((float)i);
-        results.push_back(obj_conf);
-        for (int k = 0; k < 17; k++) {
-            int base = 5 + k * 3;
-            if (base + 2 < channels) {
-                results.push_back(((float*)out.data)[base * count + i]);
-                results.push_back(((float*)out.data)[(base + 1) * count + i]);
-                results.push_back(((float*)out.data)[(base + 2) * count + i]);
-            }
-        }
-    }
-
-    jfloatArray arr = env->NewFloatArray(results.size());
-    env->SetFloatArrayRegion(arr, 0, results.size(), results.data());
-    return arr;
+    extract_results(out, conf_thresh, results);
+    return results_to_array(env, results);
 }
 
 extern "C" JNIEXPORT jfloatArray JNICALL
@@ -293,32 +298,9 @@ Java_com_CPoseMouse_core_NcnnEngine_nativeDetectBitmap(JNIEnv* env, jclass clazz
     ncnn::Mat out;
     ex.extract("out0", out);
 
-    int channels = out.h;
-    int count = out.w;
-
     std::vector<float> results;
-    results.reserve(count * 3 + 2);
-    results.push_back((float)channels);
-    results.push_back((float)count);
-
-    for (int i = 0; i < count; i++) {
-        float obj_conf = ((float*)out.data)[4 * count + i];
-        if (obj_conf < conf_thresh) continue;
-        results.push_back((float)i);
-        results.push_back(obj_conf);
-        for (int k = 0; k < 17; k++) {
-            int base = 5 + k * 3;
-            if (base + 2 < channels) {
-                results.push_back(((float*)out.data)[base * count + i]);
-                results.push_back(((float*)out.data)[(base + 1) * count + i]);
-                results.push_back(((float*)out.data)[(base + 2) * count + i]);
-            }
-        }
-    }
-
-    jfloatArray arr = env->NewFloatArray(results.size());
-    env->SetFloatArrayRegion(arr, 0, results.size(), results.data());
-    return arr;
+    extract_results(out, conf_thresh, results);
+    return results_to_array(env, results);
 }
 
 extern "C" JNIEXPORT jfloatArray JNICALL
@@ -365,32 +347,9 @@ Java_com_CPoseMouse_core_NcnnEngine_nativeDetectRawRgba(JNIEnv* env, jclass claz
     sigaction(SIGABRT, &old_sa2, nullptr);
     g_abort_expected = 0;
 
-    int channels = out.h;
-    int count = out.w;
-
     std::vector<float> results;
-    results.reserve(count * 3 + 2);
-    results.push_back((float)channels);
-    results.push_back((float)count);
-
-    for (int i = 0; i < count; i++) {
-        float obj_conf = ((float*)out.data)[4 * count + i];
-        if (obj_conf < conf_thresh) continue;
-        results.push_back((float)i);
-        results.push_back(obj_conf);
-        for (int k = 0; k < 17; k++) {
-            int base = 5 + k * 3;
-            if (base + 2 < channels) {
-                results.push_back(((float*)out.data)[base * count + i]);
-                results.push_back(((float*)out.data)[(base + 1) * count + i]);
-                results.push_back(((float*)out.data)[(base + 2) * count + i]);
-            }
-        }
-    }
-
-    jfloatArray arr = env->NewFloatArray(results.size());
-    env->SetFloatArrayRegion(arr, 0, results.size(), results.data());
-    return arr;
+    extract_results(out, conf_thresh, results);
+    return results_to_array(env, results);
 }
 
 extern "C" JNIEXPORT jdouble JNICALL
@@ -473,7 +432,8 @@ static int kcp_udp_send(const char* buf, int len, struct IKCPCB* kcp, void* user
 static void* kcp_recv_thread(void* arg) {
     suppress_omp_affinity();
 
-    uint8_t recv_buf[65536];
+    std::vector<uint8_t> recv_buf_vec(65536);
+    uint8_t* recv_buf = recv_buf_vec.data();
     struct sockaddr_in from_addr;
     socklen_t from_len = sizeof(from_addr);
 
@@ -508,8 +468,9 @@ static void* kcp_recv_thread(void* arg) {
             ikcp_update(g_kcp, current_ms);
 
             while (true) {
-                char kcp_buf[65536];
-                int kcp_len = ikcp_recv(g_kcp, kcp_buf, sizeof(kcp_buf));
+                std::vector<char> kcp_buf_vec(65536);
+                char* kcp_buf = kcp_buf_vec.data();
+                int kcp_len = ikcp_recv(g_kcp, kcp_buf, 65536);
                 if (kcp_len <= 0) break;
 
                 if (kcp_len >= 16) {
@@ -594,7 +555,7 @@ static void kcp_stop_internal() {
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_CPoseMouse_core_UdpFrameReceiver_nativeKcpStart(JNIEnv* env, jobject thiz, jint port, jint conv) {
+Java_com_CPoseMouse_core_UdpFrameReceiver_nativeKcpStart(JNIEnv* env, jclass clazz, jint port, jint conv) {
     if (g_kcp_running) {
         kcp_stop_internal();
         usleep(100000);
@@ -678,7 +639,7 @@ Java_com_CPoseMouse_core_UdpFrameReceiver_nativeKcpStart(JNIEnv* env, jobject th
 }
 
 extern "C" JNIEXPORT jintArray JNICALL
-Java_com_CPoseMouse_core_UdpFrameReceiver_nativeKcpGetFrame(JNIEnv* env, jobject thiz, jbyteArray out_buf) {
+Java_com_CPoseMouse_core_UdpFrameReceiver_nativeKcpGetFrame(JNIEnv* env, jclass clazz, jbyteArray out_buf) {
     pthread_mutex_lock(&g_frame_mutex);
     if (!g_frame_ready || g_frame_len <= 16) {
         pthread_mutex_unlock(&g_frame_mutex);
@@ -709,7 +670,7 @@ Java_com_CPoseMouse_core_UdpFrameReceiver_nativeKcpGetFrame(JNIEnv* env, jobject
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_CPoseMouse_core_UdpFrameReceiver_nativeKcpStop(JNIEnv* env, jobject thiz) {
+Java_com_CPoseMouse_core_UdpFrameReceiver_nativeKcpStop(JNIEnv* env, jclass clazz) {
     kcp_stop_internal();
     LOGI("KCP stopped");
 }

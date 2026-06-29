@@ -105,7 +105,7 @@ class H264Decoder {
     }
 
     private var consecutiveFailures = 0
-    private val MAX_CONSECUTIVE_FAILURES = 10
+    private val maxConsecutiveFailures = 10
 
     fun decodeFrame(h264Data: ByteArray, offset: Int, len: Int): ByteArray? {
         val c = codec ?: return null
@@ -150,7 +150,7 @@ class H264Decoder {
             val inputIdx = c.dequeueInputBuffer(10000)
             if (inputIdx < 0) {
                 consecutiveFailures++
-                if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+                if (consecutiveFailures >= maxConsecutiveFailures) {
                     AppLog.w(TAG, "Too many input failures ($consecutiveFailures), resetting decoder")
                     resetDecoder()
                 }
@@ -186,7 +186,7 @@ class H264Decoder {
                 }
                 outIdx == MediaCodec.INFO_TRY_AGAIN_LATER -> {
                     consecutiveFailures++
-                    if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+                    if (consecutiveFailures >= maxConsecutiveFailures) {
                         AppLog.w(TAG, "Too many output timeouts ($consecutiveFailures), resetting decoder")
                         resetDecoder()
                     }
@@ -195,7 +195,7 @@ class H264Decoder {
         } catch (e: Exception) {
             AppLog.e(TAG, "decode error len=$len: ${e.message}", e)
             consecutiveFailures++
-            if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+            if (consecutiveFailures >= maxConsecutiveFailures) {
                 resetDecoder()
             }
         }
@@ -256,46 +256,6 @@ class H264Decoder {
         return bgra
     }
 
-    private fun yuv420ToBgra(yuv: ByteBuffer, w: Int, h: Int, yStride: Int, uvSliceHeight: Int): ByteArray {
-        val bgra = ByteArray(w * h * 4)
-
-        val ySize = yStride * h
-        val uvStride = yStride
-        val uvH = h / 2
-        val uSize = uvStride * uvH
-        val vSize = uvStride * uvH
-
-        if (yuv.capacity() < ySize + uSize + vSize) {
-            AppLog.e(TAG, "yuv420ToBgra buffer too small: cap=${yuv.capacity()} need=${ySize + uSize + vSize} yStride=$yStride uvSliceHeight=$uvSliceHeight w=$w h=$h")
-            return bgra
-        }
-
-        for (j in 0 until h) {
-            for (i in 0 until w) {
-                val yIdx = j * yStride + i
-                val uvIdx = (j / 2) * uvStride + (i / 2)
-
-                val y = (yuv.get(yIdx).toInt() and 0xFF).toFloat()
-                val u = (yuv.get(ySize + uvIdx).toInt() and 0xFF).toFloat() - 128f
-                val v = (yuv.get(ySize + uSize + uvIdx).toInt() and 0xFF).toFloat() - 128f
-
-                var r = y + 1.402f * v
-                var g = y - 0.344136f * u - 0.714136f * v
-                var b = y + 1.772f * u
-
-                r = r.coerceIn(0f, 255f)
-                g = g.coerceIn(0f, 255f)
-                b = b.coerceIn(0f, 255f)
-
-                val outIdx = (j * w + i) * 4
-                bgra[outIdx] = b.toInt().toByte()
-                bgra[outIdx + 1] = g.toInt().toByte()
-                bgra[outIdx + 2] = r.toInt().toByte()
-                bgra[outIdx + 3] = -1
-            }
-        }
-        return bgra
-    }
 
     fun release() {
         try {

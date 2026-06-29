@@ -15,7 +15,9 @@ class BluetoothHidMouse(context: Context) {
     private val appContext = context.applicationContext
     private val adapter: BluetoothAdapter =
         (appContext.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
+    @Volatile
     private var hidDevice: BluetoothHidDevice? = null
+    @Volatile
     private var connectedDevice: BluetoothDevice? = null
 
     @Volatile
@@ -46,7 +48,7 @@ class BluetoothHidMouse(context: Context) {
     private val prefs: SharedPreferences =
         appContext.getSharedPreferences("posemouse_bt", Context.MODE_PRIVATE)
 
-    private val MOUSE_DESCRIPTOR = byteArrayOf(
+    private val mouseDescriptor = byteArrayOf(
         0x05.toByte(), 0x01.toByte(),
         0x09.toByte(), 0x02.toByte(),
         0xA1.toByte(), 0x01.toByte(),
@@ -132,7 +134,7 @@ class BluetoothHidMouse(context: Context) {
                             "BT Mouse",
                             "PoseMouse",
                             BluetoothHidDevice.SUBCLASS1_MOUSE,
-                            MOUSE_DESCRIPTOR
+                            mouseDescriptor
                         )
                         val qos = BluetoothHidDeviceAppQosSettings(
                             BluetoothHidDeviceAppQosSettings.SERVICE_BEST_EFFORT,
@@ -353,9 +355,13 @@ class BluetoothHidMouse(context: Context) {
         @Volatile
         var instance: BluetoothHidMouse? = null
             private set
+
+        private val instanceLock = Any()
     }
 
     init {
-        instance = this
+        synchronized(instanceLock) {
+            instance = this
+        }
     }
 }

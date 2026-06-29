@@ -47,7 +47,7 @@ class UdpFrameReceiver(private val port: Int = 19876) {
 
     private fun startKcpMode() {
         try {
-            try { System.loadLibrary("cposemouse_ncnn") } catch (_: UnsatisfiedLinkError) {}
+
             nativeKcpStart(port, kcpConv)
             isRunning = true
             h264Decoder = H264Decoder()
@@ -319,9 +319,18 @@ class UdpFrameReceiver(private val port: Int = 19876) {
         isRunning = false
     }
 
-    private external fun nativeKcpStart(port: Int, conv: Int)
-    private external fun nativeKcpGetFrame(outBuf: ByteArray): IntArray?
-    private external fun nativeKcpStop()
+    companion object {
+        private const val TAG = "UdpFrameReceiver"
 
-    companion object { private const val TAG = "UdpFrameReceiver" }
+        init {
+            try { System.loadLibrary("cposemouse_ncnn") } catch (_: UnsatisfiedLinkError) {}
+        }
+
+        @JvmStatic
+        external fun nativeKcpStart(port: Int, conv: Int)
+        @JvmStatic
+        external fun nativeKcpGetFrame(outBuf: ByteArray): IntArray?
+        @JvmStatic
+        external fun nativeKcpStop()
+    }
 }

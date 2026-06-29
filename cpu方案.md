@@ -2,7 +2,7 @@
 
 ## 方案概述
 
-在 `D:\HuaWei\CPU_pose` 下创建完全独立的CPU推理Android项目，基于NCNN+CPU引擎，不修改以下原始项目：
+在 `D:\HuaWei\CPU_pose` 下创建完全独立的CPU推理Android项目，基于NCNN+CPU引擎，**唯一鼠标算法为自适应PID**，不修改以下原始项目：
 - `D:\AS\PMouse` — 原始NPU项目
 - `D:\AS\HidRemote` — 蓝牙HID参考项目
 - `D:\AS\ncnn-android-vulkan` — NCNN Vulkan预编译库
@@ -39,10 +39,102 @@
 | 输入尺寸 | 320×320 (默认) |
 | JNI库 | libposemouse_ncnn.so (NCNN+KCP) |
 | NCNN预编译库 | ncnn-20260526-android (纯CPU版，无Vulkan) |
-| 控制算法 | AdaptivePidController (自适应PID) |
+| **鼠标算法** | **AdaptivePidController (自适应PID) — 唯一算法** |
 | 鼠标控制 | BluetoothHidMouse (蓝牙HID) |
 | 帧传输 | UDP/KCP (H.264编码) |
 | 语言 | Kotlin + C++ (JNI) |
+
+---
+
+## 自适应PID算法详解（唯一鼠标算法）
+
+### 算法架构
+
+```
+目标点坐标 → 自适应EMA平滑 → 误差计算(目标-画面中心) → 自适应PID → 速度前馈叠加 → 输出限幅 → 蓝牙HID鼠标移动
+```
+
+### 核心模块
+
+#### 1. AdaptivePidController（自适应PID）
+
+**参数（PC端验证最优值）**：
+
+| 参数 | X轴 | Y轴 | 说明 |
+|------|-----|-----|------|
+| Kp | 1.0 | 0.3 | 比例增益，X轴需更高因水平移动更频繁 |
+| Ki | 0.027 | 0.01 | 积分增益，消除稳态误差 |
+| Kd | 0.02 | 0.02 | 微分增益，抑制超调 |
+| output_limit | 50 | 50 | 单次最大移动像素 |
+| integral_limit | 100 | 100 | 积分累积上限 |
+| dead_zone | 0.12 | 0.12 | 死区，低于此误差不输出 |
+| integral_deadzone | 0.1 | 0.1 | 积分输出死区 |
+| integral_gain_threshold | 80 | 80 | 自适应积分阈值 |
+| integral_gain_rate | 0.027 | 0.027 | 自适应积分增长率 |
+
+**自适应积分机制**：
+- 小误差（`|error| < threshold`）：积分增益缓慢增长，消除稳态误差
+- 大误差：积分增益按tanh衰减，防止积分饱和/超调
+- 误差变化率大时：降低积分增长率，防止过冲
+
+**Android端当前参数 vs PC端最优参数**：
+
+| 参数 | Android当前 | PC最优 | 差异原因 |
+|------|-----------|--------|---------|
+| xKp | 0.3 | 1.0 | 蓝牙HID延迟>PC Interception，需降低 |
+| yKp | 0.3 | 0.3 | 一致 |
+| xKi | 0.01 | 0.027 | 蓝牙HID场景积分可稍增 |
+| yKi | 0.01 | 0.01 | 一致 |
+| deadZone | 0.3 | 0.12 | 蓝牙HID抖动更明显，需更大死区 |
+| outputLimit | 50 | 50 | 一致 |
+
+**策略**：初始使用Android当前参数，后续通过AutoTuner自动优化。
+
+#### 2. 自适应EMA平滑（待移植）
+
+关键点输出后、PID输入前的平滑层：
+
+| 目标移动距离 | EMA alpha | 效果 |
+|-------------|-----------|------|
+| > 20 px | 0.9 | 弱平滑，快速跟随 |
+| 5-20 px | 0.6 | 中等平滑 |
+| < 5 px | 0.2 | 强平滑，去抖动 |
+
+**实现位置**：在 `BodyParts.computeTarget()` 输出后、`InferenceLoop.processAdaptivePid()` 输入前。
+
+#### 3. 速度前馈（待移植）
+
+```
+速度 = (当前目标屏幕坐标 - 上帧目标屏幕坐标) / dt
+前馈量 = 速度 * dt * 0.3
+```
+
+前馈增益0.3，叠加到PID输出上，减少快速移动时的跟踪滞后。
+
+**实现位置**：在 `InferenceLoop` 中计算目标点位移，叠加到 `mouse.move()` 的dx/dy上。
+
+#### 4. AutoTuner自动调参器（待移植）
+
+- 滑动窗口300帧，每5秒评估一次
+- **振荡检测**（osc>0.15）：降Kp/Ki，增Kd/dead_zone
+- **滞后检测**（bias>target*0.5）：增Kp/Ki，降dead_zone
+- **最优回退**：连续3次振荡+3次滞后交替时，回退到历史最优参数
+- **参数安全边界**：Kp≤2.0, Ki≤0.15, Kd≤0.5, outputLimit≤127
+
+#### 5. 射击控制（待移植）
+
+- **持续模式**：目标存在时按住左键
+- **点射模式**：随机化按下/释放时间(130ms~286ms/40ms~100ms)
+- 通过蓝牙HID的 `clickLeft()` / `clickLeftDown()` / `clickLeftUp()` 实现
+
+### 不采用的算法及理由
+
+| 算法 | 不采用理由 |
+|------|----------|
+| Alpha-Beta PD | 自适应PID已包含其前导补偿思想，且更简洁；参数更多调参困难 |
+| HxPdController | 简单PD，无积分项，无法消除稳态误差 |
+| 数物卡尔曼 | 依赖networkx二部图匹配，Android端需替换为匈牙利算法；复杂度高，收益不确定 |
+| Chimera混合 | 参数过多(9个)，调参复杂；自适应PID已足够稳定 |
 
 ---
 
@@ -59,13 +151,13 @@ D:\HuaWei\CPU_pose\CPoseMouse\          (独立项目根目录)
 │       │   ├── core/
 │       │   │   ├── InferenceEngine.kt       (接口+数据类)
 │       │   │   ├── NcnnEngine.kt            (NCNN CPU引擎)
-│       │   │   ├── InferenceLoop.kt         (推理循环)
+│       │   │   ├── InferenceLoop.kt         (推理循环+速度前馈)
 │       │   │   ├── BluetoothHidMouse.kt     (蓝牙HID)
-│       │   │   ├── AdaptivePidController.kt (自适应PID)
-│       │   │   ├── AlphaBetaPDController.kt (α-β PD备选)
-│       │   │   ├── HxPdController.kt        (简单PD备选)
+│       │   │   ├── AdaptivePidController.kt (自适应PID — 唯一鼠标算法)
+│       │   │   ├── AdaptiveEmaSmoother.kt   (自适应EMA平滑)
+│       │   │   ├── AutoTuner.kt             (自动调参器)
+│       │   │   ├── FireController.kt        (射击控制)
 │       │   │   ├── BodyParts.kt             (瞄准部位)
-│       │   │   ├── KalmanMultiTracker.kt    (卡尔曼跟踪)
 │       │   │   ├── LowTextureSuppressor.kt  (低纹理抑制)
 │       │   │   ├── UdpFrameReceiver.kt      (UDP帧接收)
 │       │   │   ├── UdpTargetSender.kt       (UDP目标发送)
@@ -92,6 +184,10 @@ D:\HuaWei\CPU_pose\CPoseMouse\          (独立项目根目录)
 └── gradle/libs.versions.toml
 ```
 
+**与原项目结构差异**：
+- ❌ 移除 `AlphaBetaPDController.kt`、`HxPdController.kt`、`KalmanMultiTracker.kt`
+- ✅ 新增 `AdaptiveEmaSmoother.kt`、`AutoTuner.kt`、`FireController.kt`
+
 ---
 
 ## 与原项目的差异
@@ -100,11 +196,16 @@ D:\HuaWei\CPU_pose\CPoseMouse\          (独立项目根目录)
 |------|-----------------|---------------------|
 | 包名 | com.PMouse | com.CPoseMouse |
 | 引擎 | 4种(ncnn/vulkan/litert/neuron) | 仅ncnn_cpu |
+| 鼠标算法 | 3种(APID/α-β PD/HxPD) | 仅自适应PID |
 | NCNN库 | Vulkan版 (含glslang) | 纯CPU版 (无Vulkan依赖) |
 | jniLibs | 3个LiteRT SO | 空 |
 | Gradle依赖 | litert + onnxruntime | 无额外ML依赖 |
 | CMake targets | 2个(posemouse_ncnn + neuron_direct) | 1个(posemouse_ncnn) |
 | 模型文件 | 全部(含tflite/onnx/yolo11n) | 仅yolo26n-pose NCNN格式 |
+| EMA平滑 | 无 | 自适应EMA（从PC端移植） |
+| 速度前馈 | 无 | 有（从PC端移植） |
+| 自动调参 | 无 | AutoTuner（从PC端移植） |
+| 射击控制 | 无 | FireController（从PC端移植） |
 | APK体积 | 较大 | 较小 |
 
 ---
@@ -135,19 +236,8 @@ D:\HuaWei\CPU_pose\CPoseMouse\          (独立项目根目录)
 | yolo26n-pose-160 | ~7ms (1线程) | 可能15-30ms |
 | yolo26n-pose-320 | ~15-25ms (估计) | 可能20-40ms |
 | 大模型(640x640) | 50-100ms | 30-50ms |
-| 启动延迟 | 低 | 高（需编译shader） |
-| 内存 | 低 | 高（需GPU显存） |
 
-**结论**：nano级pose模型(≤320)，CPU路线正确。GPU仅640x640大模型才有优势。
-
-### NCNN fp16/int8在ARMv9上的支持
-
-| 特性 | Cortex-X4/A720支持 | NCNN默认 |
-|------|-------------------|---------|
-| fp16_storage | ✅ ARMv8.2-A FP16 | 开启 |
-| fp16_packed | ✅ NEON FP16向量 | 开启 |
-| int8_storage | ✅ ARMv8.2-A DOT指令 | 开启 |
-| fp16_arithmetic | ✅ ARMv8.2-A | 关闭（精度风险） |
+**结论**：nano级pose模型(≤320)，CPU路线正确。
 
 ### H.264传输端到端延迟分析
 
@@ -159,11 +249,6 @@ D:\HuaWei\CPU_pose\CPoseMouse\          (独立项目根目录)
 | Android MediaCodec解码 | 5-15ms | 天玑9300硬件解码 |
 | YUV→BGRA转换 | 2-5ms | 当前Java软件转换（瓶颈！） |
 | **总延迟** | **14-43ms** | |
-
-**关键瓶颈**：`H264Decoder.imageToBgra()` 是纯Java逐像素YUV420→BGRA转换。优化方案：
-1. C++ NEON指令做YUV420→BGRA（预期提速5-10x）
-2. MediaCodec Surface输出模式，跳过CPU转换
-3. 直接传YUV给NCNN（需修改NCNN输入格式）
 
 ### UDP vs KCP选择
 
@@ -186,49 +271,42 @@ D:\HuaWei\CPU_pose\CPoseMouse\          (独立项目根目录)
 - 输出：56通道 (4 bbox + 1 obj_conf + 17×3 keypoints)，2100 anchors (320×320)
 - COCO 17关键点：0-4头部, 5-6肩膀, 7-8肘部, 9-10手腕, 11-12髋部, 13-14膝盖, 15-16脚踝
 
-### 各框架在天玑9300上的对比
-
-| 框架 | 适配性 | CPU性能 | 优势 | 劣势 |
-|------|--------|---------|------|------|
-| NCNN CPU | 优秀 | ~7ms@160 | 无依赖、fp16/int8 | OMP问题 |
-| MNN | 优秀 | 接近NCNN | 阿里维护、ARM优化 | 社区小 |
-| TFLite/LiteRT | 需NeuronDelegate | 较慢 | Google官方 | 天玑CPU路径慢 |
-| ONNX Runtime | 一般 | 较慢 | 兼容性好 | 移动端优化不足 |
-| NeuronDirect NPU | 最佳 | 最快 | 直接调天玑NPU | bytecode复杂 |
-
 ---
 
 ## 进展记录
 
-### [ ] 阶段0：项目骨架搭建
-- [ ] 创建Android项目目录结构
-- [ ] 配置build.gradle.kts (移除litert/onnxruntime依赖)
-- [ ] 配置CMakeLists.txt (仅posemouse_ncnn target，指向纯CPU版NCNN)
-- [ ] 复制NCNN纯CPU预编译库到cpp目录
-- [ ] 复制yolo26n-pose模型到assets
-- [ ] 配置AndroidManifest.xml
-- [ ] 验证：项目可在Android Studio中打开并sync成功
+### [x] 阶段0：项目骨架搭建
+- [x] 创建Android项目目录结构
+- [x] 配置build.gradle.kts (移除litert/onnxruntime依赖)
+- [x] 配置CMakeLists.txt (仅cposemouse_ncnn target，指向纯CPU版NCNN)
+- [x] 复制NCNN纯CPU预编译库到cpp目录
+- [x] 复制yolo26n-pose模型到assets
+- [x] 配置AndroidManifest.xml
+- [x] 验证：assembleDebug编译通过(BUILD SUCCESSFUL)
+- [x] 推送到GitHub: https://github.com/1779228466-ui/cpu_mouse
 
 ### [ ] 阶段1：核心代码移植
 - [ ] 移植InferenceEngine.kt (接口+数据类)
 - [ ] 移植NcnnEngine.kt (仅保留NCNN CPU逻辑)
 - [ ] 移植posemouse_ncnn_jni.cpp + ikcp.c/h
-- [ ] 移植InferenceLoop.kt
+- [ ] 移植InferenceLoop.kt (集成速度前馈)
 - [ ] 移植BluetoothHidMouse.kt
-- [ ] 移植AdaptivePidController.kt
+- [ ] 移植AdaptivePidController.kt (唯一鼠标算法，参数对齐PC端)
+- [ ] 新增AdaptiveEmaSmoother.kt (自适应EMA平滑，从PC端移植)
+- [ ] 新增AutoTuner.kt (自动调参器，从PC端移植)
+- [ ] 新增FireController.kt (射击控制，从PC端移植)
 - [ ] 移植BodyParts.kt
 - [ ] 移植UdpFrameReceiver.kt + H264Decoder.kt
 - [ ] 移植ScreenCapture.kt
 - [ ] 移植AppLog.kt
-- [ ] 移植InferenceService.kt (简化引擎选择)
+- [ ] 移植InferenceService.kt (简化：仅ncnn_cpu引擎)
 - [ ] 移植InferenceServiceHolder.kt
 - [ ] 移植LowTextureSuppressor.kt
-- [ ] 移植KalmanMultiTracker.kt
 - [ ] 移植UdpTargetSender.kt
 - [ ] 验证：编译通过，生成APK
 
 ### [ ] 阶段2：UI移植
-- [ ] 移植MainActivity.kt (简化引擎选择UI)
+- [ ] 移植MainActivity.kt (移除引擎选择UI，移除算法切换UI，仅自适应PID)
 - [ ] 移植res资源文件
 - [ ] 验证：UI正常显示
 
@@ -237,15 +315,16 @@ D:\HuaWei\CPU_pose\CPoseMouse\          (独立项目根目录)
 - [ ] NCNN CPU推理测试 (截屏模式)
 - [ ] UDP/KCP帧接收测试
 - [ ] H.264解码测试
-- [ ] 完整链路测试 (OBS→KCP→NCNN→PID→蓝牙HID)
+- [ ] 完整链路测试 (OBS→KCP→NCNN→自适应PID→蓝牙HID)
 - [ ] 性能基准测试
+- [ ] AutoTuner自动调参验证
 
 ### [ ] 阶段4：优化
 - [ ] 全局变量消除 (按"全局变量消除方案.md"执行)
 - [ ] NCNN多线程探索 (1线程→4线程+大核绑定)
-- [ ] 卡尔曼跟踪器集成到InferenceLoop
 - [ ] H264Decoder YUV→BGRA NEON优化
 - [ ] 蓝牙HID设备名伪装
+- [ ] 自适应PID参数微调（基于AutoTuner实测数据）
 
 ---
 
@@ -266,12 +345,74 @@ D:\HuaWei\CPU_pose\CPoseMouse\          (独立项目根目录)
 - **解决**: 待实现C++ NEON优化或Surface直出
 - **状态**: 未解决
 
-### 问题#3: KalmanMultiTracker已实现但未集成
-- **日期**: 原项目遗留
-- **现象**: KalmanMultiTracker有完整实现但InferenceLoop未使用
-- **原因**: 原项目优先级未到
-- **解决**: 待集成到InferenceLoop的processPoses流程
-- **状态**: 待实现
+### 问题#3: 自适应PID参数需针对蓝牙HID调整
+- **日期**: 方案制定时发现
+- **现象**: PC端最优参数(Kp=1.0, dead_zone=0.12)可能不适用于蓝牙HID场景
+- **原因**: 蓝牙HID有额外延迟(~8-15ms)和量化误差(-127~127)，PC端Interception驱动延迟<1ms
+- **解决**: 初始使用Android当前参数，通过AutoTuner自动优化
+- **状态**: 待验证
+
+---
+
+## 代码规范性检查报告
+
+> 检查日期：2026-06-29，基于编译通过的初始骨架代码
+
+### 高严重度问题（7个）
+
+| 编号 | 文件 | 行号 | 问题 | 状态 |
+|------|------|------|------|------|
+| H-01 | UdpFrameReceiver.kt / cposemouse_ncnn_jni.cpp | 322 / 597 | JNI风格不一致：UdpFrameReceiver用实例方法+`jobject thiz`操作全局状态，应改`@JvmStatic companion object`+`jclass` | ✅已修复 |
+| H-02 | InferenceLoop.kt | 89 | **功能Bug**：`detector.detect(cropped, 0.6f)`硬编码0.6f，未用`confThreshold`，用户调整置信度对截屏模式无效 | ✅已修复 |
+| H-03 | BluetoothHidMouse.kt | 18-19, 300-335 | `connectedDevice`/`hidDevice`非`@Volatile`，callback线程写、推理线程读，存在可见性竞态 | ✅已修复 |
+| H-04 | BluetoothHidMouse.kt | 351-360 | `instance`在`init`中赋值，多实例创建会互相覆盖 | ✅已修复 |
+| H-05 | InferenceLoop.kt | 29-34, 199 | `reusableBitmap`/`inferBitmap`/`latestFrameBitmap`未`recycle()`，长时间运行内存泄漏 | ✅已修复 |
+| H-06 | UdpTargetSender.kt | 9 | 硬编码IP `"10.181.9.68"`，换网络即失效 | ✅已修复 |
+| H-07 | cposemouse_ncnn_jni.cpp | 99-465 | 16个static全局变量，缺乏封装 | ⏳阶段4重构 |
+
+### 中严重度问题（19个）
+
+| 编号 | 文件 | 行号 | 问题 | 状态 |
+|------|------|------|------|------|
+| M-01 | MainActivity.kt | 56-67 | 顶层私有变量`BgColor`等应为camelCase | ✅已修复 |
+| M-02 | BluetoothHidMouse.kt | 49 | `MOUSE_DESCRIPTOR`应为`mouseDescriptor` | ✅已修复 |
+| M-03 | InferenceLoop.kt | 41 | `SKELETON_CONNECTIONS`应为`skeletonConnections` | ✅已修复 |
+| M-04 | H264Decoder.kt | 108 | `MAX_CONSECUTIVE_FAILURES`应为`maxConsecutiveFailures` | ✅已修复 |
+| M-05 | 多文件 | - | 硬编码端口号/魔法数字 | ✅已修复 |
+| M-06 | InferenceService.kt | 141 | `defaultDisplay`废弃API | ✅已修复 |
+| M-07 | InferenceService.kt | 62 | `getParcelableExtra`泛型形式废弃 | ✅已修复 |
+| M-08 | ScreenCapture.kt | 92 | `VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR`废弃 | ⏳需API 33+替代 |
+| M-09 | NcnnEngine.kt | 89-109 vs 137-157 | `detect()`和`detectRawRgba()`结果解析逻辑重复 | ✅已修复 |
+| M-10 | cposemouse_ncnn_jni.cpp | 248-261等 | 三个detect函数结果提取循环重复 | ✅已修复 |
+| M-11 | UdpFrameReceiver.kt | 104-133 vs 241-271 | `processJpegFrame`和`processJpegFrameInline`逻辑重复 | ✅已修复 |
+| M-12 | H264Decoder.kt | 259-298 | `yuv420ToBgra()`从未被调用（死代码） | ✅已修复 |
+| M-13 | InferenceService.kt | 74-120 vs 122-182 | `startUdpMode`和`startCaptureMode`初始化代码重复 | ✅已修复 |
+| M-14 | 多文件 | - | 多处`catch (_: Exception) {}`静默吞没异常 | ✅已修复 |
+| M-15 | AppLog.kt | 27, 137, 162 | `logFileWriter`无同步保护 | ✅已修复 |
+| M-16 | H264Decoder.kt | 10 | `codec`字段无同步保护 | ⏳单线程调用，低优先 |
+| M-17 | MainActivity.kt | 195 | `@SuppressLint("SetJavaScriptEnabled")`遗留注解 | ✅已修复 |
+| M-18 | MainActivity.kt | 197-211等 | 函数参数过多(20+个) | ⏳需重构UI状态管理 |
+| M-19 | InferenceService.kt | 224 | `typealias Activity`位置不当 | ✅已修复 |
+
+### 低严重度问题（15个）
+
+| 编号 | 问题 | 状态 |
+|------|------|------|
+| L-01 | 包名`CPoseMouse`用PascalCase，惯例应全小写 | ⏳重构成本高，暂保持 |
+| L-02 | 缺`kotlinOptions { jvmTarget = "11" }` | ✅已修复 |
+| L-03 | `compileSdk`使用非标准块语法 | ⏳需确认AGP 9.x兼容性 |
+| L-04 | `useLegacyPackaging = true`可能不必要 | ⏳待测试移除 |
+| L-05 | 单行多语句(分号分隔) | ✅已修复 |
+| L-06 | 超长行(300+字符) | ✅已修复 |
+| L-07 | 缩进不一致 | ✅已修复 |
+| L-08 | Color.kt定义的Compose Color未使用 | ⏳低优先 |
+| L-09 | C++ SIGABRT处理机制hacky | ⏳阶段4优化 |
+| L-10 | C++栈上分配64KB缓冲区 | ✅已修复 |
+| L-11 | ikcp.c vsprintf缓冲区溢出风险 | ✅已修复 |
+| L-12 | 通配符import | ✅已修复 |
+| L-13 | ScreenCapture.getDensityDpi始终返回默认值 | ⏳低优先 |
+| L-14 | InferenceLoop冗余Bitmap创建 | ✅已修复 |
+| L-15 | InferenceService未关闭UdpTargetSender | ✅已修复 |
 
 ---
 
@@ -282,7 +423,6 @@ D:\HuaWei\CPU_pose\CPoseMouse\          (独立项目根目录)
 | yolo26n-pose-160, NCNN CPU, 1线程 | ~7ms | ~140 | 原项目数据 |
 | yolo26n-pose-320, NCNN CPU, 1线程 | ~15-25ms(估) | ~40-67(估) | 面积4倍于160 |
 | yolo26n-pose-320, NCNN CPU, 4线程 | 待测 | 待测 | 大核绑定策略 |
-| yolo26n-pose-320, NCNN CPU, 8线程 | 待测 | 待测 | 全核策略 |
 
 ---
 
@@ -293,10 +433,69 @@ D:\HuaWei\CPU_pose\CPoseMouse\          (独立项目根目录)
 | | 包名改为com.CPoseMouse | 与原NPU项目完全隔离 |
 | | 使用纯CPU版NCNN | 无Vulkan依赖，APK更小，nano模型CPU更快 |
 | | 仅保留yolo26n-pose模型 | CPU路线不需要tflite/onnx |
+| | **唯一鼠标算法：自适应PID** | PC端验证最优(Kp=1.0/0.3, 误差<5px)；其他算法增加复杂度但收益有限 |
+| | 移除AlphaBetaPD/HxPD/KalmanMultiTracker | 算法统一减少维护成本；自适应PID+EMA+前馈已覆盖所有需求 |
+| | 移植自适应EMA平滑 | 解决关键点抖动问题，PC端已验证有效 |
+| | 移植速度前馈 | 减少快速移动时跟踪滞后，PC端已验证有效 |
+| | 移植AutoTuner | 自动优化PID参数，避免手动调参 |
+| | 移植FireController | 射击控制是核心功能 |
 | | NCNN默认1线程 | 原项目因OMP SIGABRT而限制，后续可尝试4线程+大核绑定 |
 | | USB共享网络场景用UDP | 丢包率<0.1%，延迟比KCP低1-2ms |
 | | WiFi场景用KCP | 丢包率1-5%，KCP自动重传更稳定 |
 | | 蓝牙HID设备名需伪装 | "PoseMouse"易被反作弊标记 |
+
+---
+
+## PC端算法参考（pc-dxgi-yolo- 项目）
+
+已提取到 `D:\HuaWei\CPU_pose\pc-dxgi-yolo-algorithms\`，包含4种控制算法和完整辅助模块。
+
+### 4种控制算法对比（仅自适应PID被采用）
+
+| 算法 | 核心思想 | 是否采用 | 理由 |
+|------|---------|---------|------|
+| **自适应PID** | **自适应积分增益+死区+限幅** | **✅ 唯一采用** | **PC端验证最优，简单有效** |
+| Alpha-Beta PD | α-β滤波器平滑+前导补偿+PID | ❌ | 自适应PID已含前导思想，更简洁 |
+| 数物卡尔曼 | 6维卡尔曼滤波+二部图匹配 | ❌ | 依赖networkx，复杂度高 |
+| Chimera混合 | 归一化误差+接近度滤波+阻尼 | ❌ | 参数过多(9个)，调参困难 |
+
+### PC端最优参数（自适应PID，auto_tune达标时平均误差<5px）
+
+| 参数 | X轴 | Y轴 |
+|------|-----|-----|
+| Kp | 1.0 | 0.3 |
+| Ki | 0.027 | 0.01 |
+| Kd | 0.02 | 0.02 |
+| output_limit | 50 | 50 |
+| dead_zone | 0.12 | 0.12 |
+
+### 速度前馈
+
+```
+速度 = (当前屏幕坐标 - 上帧屏幕坐标) / dt
+前馈量 = 速度 * dt * 0.3
+```
+
+### 自适应EMA平滑
+
+| 目标移动距离 | EMA alpha | 效果 |
+|-------------|-----------|------|
+| > 20 px | 0.9 | 弱平滑，快速跟随 |
+| 5-20 px | 0.6 | 中等平滑 |
+| < 5 px | 0.2 | 强平滑，去抖动 |
+
+### 自动调参器
+
+- 滑动窗口300帧，每5秒评估一次
+- 振荡(osc>0.15): 降Kp/Ki，增Kd/dead_zone
+- 滞后(bias>target*0.5): 增Kp/Ki，降dead_zone
+- 连续3次振荡+3次滞后交替: 回退到历史最优参数
+- 参数安全边界: Kp≤2.0, Ki≤0.15, Kd≤0.5
+
+### 射击控制
+
+- 持续模式: 目标存在时按住左键
+- 点射模式: 随机化按下/释放时间(130ms~286ms/40ms~100ms)
 
 ---
 
@@ -311,3 +510,5 @@ D:\HuaWei\CPU_pose\CPoseMouse\          (独立项目根目录)
 **Kotlin（移除5个）**：LiteRtEngine.kt、NeuronDirectEngine.kt、OnnxEngine.kt、TfliteNnapiEngine.kt.bak、TfliteNnapiEngine.kt.disabled
 
 **C++（移除3项）**：neuron_direct_jni.cpp、neuropilot_include/目录、ncnn-20260526-android-vulkan/目录
+
+**后续需移除（原项目有但本项目不需要）**：AlphaBetaPDController.kt、HxPdController.kt、KalmanMultiTracker.kt

@@ -42,6 +42,7 @@ import com.CPoseMouse.core.*
 import com.CPoseMouse.ui.theme.CPoseMouseTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.delay
 
 enum class AppTab(val label: String) {
     Monitor("监控"), Function("功能"), Settings("设置")
@@ -64,31 +65,49 @@ fun BenchmarkScreen(activity: ComponentActivity) {
     val context = LocalContext.current
     var status by remember { mutableStateOf("准备中...") }
     var result by remember { mutableStateOf("") }
+    var detail by remember { mutableStateOf("") }
 
     LaunchedEffect(Unit) {
-        status = "加载模型并推理中..."
+        status = "持续推理中..."
         withContext(Dispatchers.IO) {
             val engine = NcnnEngine(inputSize = 320)
-            val avgMs = engine.benchmarkOnly(context, warmup = 5, runs = 20)
-            if (avgMs != null && avgMs > 0) {
-                val fps = 1000.0 / avgMs
-                result = String.format("%.1fms  %.0fFPS", avgMs, fps)
+            engine.benchmarkRunning = true
+            engine.benchmarkContinuous(context, durationSec = 60)
+            var lastFrames = 0
+            var lastTime = System.currentTimeMillis()
+            while (engine.benchmarkRunning) {
+                delay(2000)
+                val now = System.currentTimeMillis()
+                val dt = (now - lastTime) / 1000.0
+                val log = AppLog.logs.lastOrNull { it.contains("BENCH_C:") && !it.contains("start") }
+                if (log != null) {
+                    detail = log.substringAfter("BENCH_C: ")
+                }
+                lastTime = now
+            }
+            val doneLog = AppLog.logs.lastOrNull { it.contains("BENCH_C_DONE:") }
+            if (doneLog != null) {
+                result = doneLog.substringAfter("BENCH_C_DONE: ")
                 status = "完成"
             } else {
-                result = "失败"
-                status = "失败"
+                result = "完成"
+                status = "完成"
             }
         }
     }
 
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text("NCNN Benchmark", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color(0xFF555555))
+        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(32.dp)) {
+            Text("NCNN 持续Benchmark", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color(0xFF555555))
             Spacer(modifier = Modifier.height(16.dp))
             Text(status, fontSize = 16.sp, color = Color(0xFF7E7E7E))
-            if (result.isNotEmpty()) {
+            if (detail.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(detail, fontSize = 14.sp, color = Color(0xFF555555), fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+            }
+            if (result.isNotEmpty() && status == "完成") {
                 Spacer(modifier = Modifier.height(16.dp))
-                Text(result, fontSize = 28.sp, fontWeight = FontWeight.Bold, color = Color(0xFF4CAF50))
+                Text(result, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFF4CAF50), fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
             }
         }
     }

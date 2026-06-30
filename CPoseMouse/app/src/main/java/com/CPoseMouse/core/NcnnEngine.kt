@@ -133,17 +133,6 @@ class NcnnEngine(private val useVulkan: Boolean = false, private val inputSize: 
             if (avgMs > 0) {
                 val fps = 1000.0 / avgMs
                 AppLog.i(TAG, String.format("BENCHMARK_RESULT: avg=%.1fms FPS=%.0f runs=%d size=%d", avgMs, fps, runs, inputSize))
-                val testBitmap = Bitmap.createBitmap(inputSize, inputSize, Bitmap.Config.ARGB_8888)
-                val results = detect(testBitmap, 0.3f)
-                testBitmap.recycle()
-                if (results.isNotEmpty()) {
-                    val p = results[0]
-                    AppLog.i(TAG, String.format("BENCHMARK_POSE: conf=%.2f kps=%d nose=(%s,%s)", p.confidence, p.keypoints.size,
-                        p.keypoints.getOrNull(0)?.let { String.format("%.1f", it.x) } ?: "?",
-                        p.keypoints.getOrNull(0)?.let { String.format("%.1f", it.y) } ?: "?"))
-                } else {
-                    AppLog.i(TAG, "BENCHMARK_POSE: no detection on dummy image (expected)")
-                }
             }
             nativeRelease()
             loaded = false
@@ -152,6 +141,67 @@ class NcnnEngine(private val useVulkan: Boolean = false, private val inputSize: 
             AppLog.e(TAG, "BENCHMARK: exception", e)
             return null
         }
+    }
+
+    @Volatile var benchmarkRunning = false
+
+    fun benchmarkContinuous(context: Context, durationSec: Int = 30) {
+        Thread {
+            try {
+                nativeInitThread()
+                val ok = nativeLoadModel(context.assets, useVulkan, inputSize)
+                if (!ok) {
+                    AppLog.e(TAG, "BENCH_C: loadModel failed")
+                    benchmarkRunning = false
+                    return@Thread
+                }
+                loaded = true
+                val bitmap = Bitmap.createBitmap(inputSize, inputSize, Bitmap.Config.ARGB_8888)
+                for (i in 0 until 3) detect(bitmap, 0.5f)
+                AppLog.i(TAG, "BENCH_C: start duration=${durationSec}s size=$inputSize")
+
+                var totalFrames = 0
+                var totalMs = 0.0
+                val startMs = System.currentTimeMillis()
+                var lastReportMs = startMs
+                var lastReportFrames = 0
+
+                while (benchmarkRunning) {
+                    val elapsed = (System.currentTimeMillis() - startMs) / 1000.0
+                    if (elapsed >= durationSec) break
+
+                    val t0 = System.nanoTime()
+                    detect(bitmap, 0.5f)
+                    val t1 = System.nanoTime()
+                    val inferMs = (t1 - t0) / 1e6
+                    totalFrames++
+                    totalMs += inferMs
+
+                    val now = System.currentTimeMillis()
+                    if (now - lastReportMs >= 2000) {
+                        val intervalFrames = totalFrames - lastReportFrames
+                        val intervalSec = (now - lastReportMs) / 1000.0
+                        val intervalFps = intervalFrames / intervalSec
+                        val avgMs2 = totalMs / totalFrames
+                        val overallFps = 1000.0 / avgMs2
+                        AppLog.i(TAG, String.format("BENCH_C: t=%.0fs frames=%d avg=%.1fms instFPS=%.1f overallFPS=%.1f", elapsed, totalFrames, avgMs2, intervalFps, overallFps))
+                        lastReportMs = now
+                        lastReportFrames = totalFrames
+                    }
+                }
+
+                bitmap.recycle()
+                val avgMs = if (totalFrames > 0) totalMs / totalFrames else 0.0
+                val fps = if (avgMs > 0) 1000.0 / avgMs else 0.0
+                AppLog.i(TAG, String.format("BENCH_C_DONE: frames=%d avg=%.1fms FPS=%.1f duration=%.1fs", totalFrames, avgMs, fps, (System.currentTimeMillis() - startMs) / 1000.0))
+                nativeRelease()
+                loaded = false
+            } catch (e: Exception) {
+                AppLog.e(TAG, "BENCH_C: exception", e)
+            } finally {
+                benchmarkRunning = false
+            }
+        }.start()
     }
 
     override fun release() {

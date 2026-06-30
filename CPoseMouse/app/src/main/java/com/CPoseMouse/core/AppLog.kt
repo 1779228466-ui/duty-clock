@@ -15,7 +15,7 @@ import java.util.Locale
 
 object AppLog {
     private val _logs = mutableListOf<String>()
-    private const val MAX_LOGS = 100
+    private const val MAX_LOGS = 2000
     private const val LOG_FILE = "posemouse_log.txt"
 
     private val clients = mutableListOf<PrintWriter>()

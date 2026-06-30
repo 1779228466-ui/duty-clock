@@ -40,6 +40,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.CPoseMouse.core.*
 import com.CPoseMouse.ui.theme.CPoseMouseTheme
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 enum class AppTab(val label: String) {
     Monitor("监控"), Function("功能"), Settings("设置")
@@ -49,7 +51,46 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        setContent { CPoseMouseTheme { MainApp() } }
+        if ("com.CPoseMouse.ACTION_BENCHMARK" == intent?.action) {
+            setContent { CPoseMouseTheme { BenchmarkScreen(this) } }
+        } else {
+            setContent { CPoseMouseTheme { MainApp() } }
+        }
+    }
+}
+
+@Composable
+fun BenchmarkScreen(activity: ComponentActivity) {
+    val context = LocalContext.current
+    var status by remember { mutableStateOf("准备中...") }
+    var result by remember { mutableStateOf("") }
+
+    LaunchedEffect(Unit) {
+        status = "加载模型并推理中..."
+        withContext(Dispatchers.IO) {
+            val engine = NcnnEngine(inputSize = 320)
+            val avgMs = engine.benchmarkOnly(context, warmup = 5, runs = 20)
+            if (avgMs != null && avgMs > 0) {
+                val fps = 1000.0 / avgMs
+                result = String.format("%.1fms  %.0fFPS", avgMs, fps)
+                status = "完成"
+            } else {
+                result = "失败"
+                status = "失败"
+            }
+        }
+    }
+
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("NCNN Benchmark", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color(0xFF555555))
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(status, fontSize = 16.sp, color = Color(0xFF7E7E7E))
+            if (result.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(result, fontSize = 28.sp, fontWeight = FontWeight.Bold, color = Color(0xFF4CAF50))
+            }
+        }
     }
 }
 

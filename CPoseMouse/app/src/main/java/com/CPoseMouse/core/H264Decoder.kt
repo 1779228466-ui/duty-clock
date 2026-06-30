@@ -213,6 +213,15 @@ class H264Decoder {
     }
 
 
+    private var bgraBuf = ByteArray(0)
+
+    private external fun nativeYuv420ToBgra(
+        yArr: ByteArray, uArr: ByteArray, vArr: ByteArray,
+        width: Int, height: Int,
+        yStride: Int, uvStride: Int, uvPixelStride: Int,
+        outBgra: ByteArray
+    )
+
     private fun imageToBgra(image: Image, w: Int, h: Int): ByteArray {
         val planes = image.planes
         val yPlane = planes[0]
@@ -227,33 +236,19 @@ class H264Decoder {
         val uBuf = uPlane.buffer
         val vBuf = vPlane.buffer
 
-        val bgra = ByteArray(w * h * 4)
+        val yArr = ByteArray(yBuf.remaining())
+        yBuf.get(yArr)
+        val uArr = ByteArray(uBuf.remaining())
+        uBuf.get(uArr)
+        val vArr = ByteArray(vBuf.remaining())
+        vBuf.get(vArr)
 
-        for (j in 0 until h) {
-            for (i in 0 until w) {
-                val yIdx = j * yRowStride + i
-                val uvIdx = (j / 2) * uvRowStride + (i / 2) * uvPixelStride
-
-                val y = (yBuf.get(yIdx).toInt() and 0xFF).toFloat()
-                val u = (uBuf.get(uvIdx).toInt() and 0xFF).toFloat() - 128f
-                val v = (vBuf.get(uvIdx).toInt() and 0xFF).toFloat() - 128f
-
-                var r = y + 1.402f * v
-                var g = y - 0.344136f * u - 0.714136f * v
-                var b = y + 1.772f * u
-
-                r = r.coerceIn(0f, 255f)
-                g = g.coerceIn(0f, 255f)
-                b = b.coerceIn(0f, 255f)
-
-                val outIdx = (j * w + i) * 4
-                bgra[outIdx] = b.toInt().toByte()
-                bgra[outIdx + 1] = g.toInt().toByte()
-                bgra[outIdx + 2] = r.toInt().toByte()
-                bgra[outIdx + 3] = -1
-            }
+        if (bgraBuf.size < w * h * 4) {
+            bgraBuf = ByteArray(w * h * 4)
         }
-        return bgra
+
+        nativeYuv420ToBgra(yArr, uArr, vArr, w, h, yRowStride, uvRowStride, uvPixelStride, bgraBuf)
+        return bgraBuf
     }
 
 
@@ -267,5 +262,8 @@ class H264Decoder {
         spsPps = null
     }
 
-    companion object { private const val TAG = "H264Decoder" }
+    companion object {
+        private const val TAG = "H264Decoder"
+        init { System.loadLibrary("cposemouse_ncnn") }
+    }
 }

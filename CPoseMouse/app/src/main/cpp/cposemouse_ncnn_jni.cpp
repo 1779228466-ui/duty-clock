@@ -22,12 +22,13 @@
 #include <sched.h>
 #include <cerrno>
 #include <cstring>
+#include <arm_neon.h>
 #include "ikcp.h"
 
 
-#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "NcnnJni", __VA_ARGS__)
-#define LOGW(...) __android_log_print(ANDROID_LOG_WARN, "NcnnJni", __VA_ARGS__)
-#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "NcnnJni", __VA_ARGS__)
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "NcnnEngine", __VA_ARGS__)
+#define LOGW(...) __android_log_print(ANDROID_LOG_WARN, "NcnnEngine", __VA_ARGS__)
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "NcnnEngine", __VA_ARGS__)
 
 static sigjmp_buf g_abort_jmp;
 static volatile sig_atomic_t g_abort_expected = 0;
@@ -176,20 +177,34 @@ Java_com_CPoseMouse_core_NcnnEngine_nativeLoadModel(JNIEnv* env, jclass clazz, j
     g_target_size = input_size;
 
     ncnn::Option opt;
+    opt.lightmode = true;
     opt.num_threads = 4;
-    opt.openmp_blocktime = 0;
+    opt.openmp_blocktime = 20;
 #if NCNN_VULKAN
     opt.use_vulkan_compute = g_use_gpu;
 #endif
+    opt.use_packing_layout = true;
+    opt.use_winograd_convolution = true;
+    opt.use_winograd23_convolution = true;
+    opt.use_winograd43_convolution = true;
+    opt.use_sgemm_convolution = true;
     opt.use_fp16_packed = true;
     opt.use_fp16_storage = true;
     opt.use_fp16_arithmetic = true;
     opt.use_int8_storage = true;
+    opt.use_int8_packed = true;
+    opt.use_int8_arithmetic = true;
+    opt.use_int8_inference = true;
+    opt.use_bf16_storage = true;
+    opt.flush_denormals = 3;
+    opt.use_a53_a55_optimized_kernel = false;
 
-    LOGI("NCNN opt: threads=%d fp16_packed=%d fp16_storage=%d fp16_arithmetic=%d int8=%d",
-         opt.num_threads, opt.use_fp16_packed, opt.use_fp16_storage, opt.use_fp16_arithmetic, opt.use_int8_storage);
-
-
+    LOGI("NCNN opt: threads=%d blocktime=%d pack=%d winograd=%d sgemm=%d fp16p=%d fp16s=%d fp16a=%d int8s=%d int8p=%d int8a=%d bf16=%d flush=%d a53=%d",
+         opt.num_threads, opt.openmp_blocktime,
+         opt.use_packing_layout, opt.use_winograd_convolution, opt.use_sgemm_convolution,
+         opt.use_fp16_packed, opt.use_fp16_storage, opt.use_fp16_arithmetic,
+         opt.use_int8_storage, opt.use_int8_packed, opt.use_int8_arithmetic,
+         opt.use_bf16_storage, opt.flush_denormals, opt.use_a53_a55_optimized_kernel);
 
     g_net->opt = opt;
 
@@ -275,12 +290,9 @@ static jfloatArray results_to_array(JNIEnv* env, std::vector<float>& results) {
 extern "C" JNIEXPORT jfloatArray JNICALL
 Java_com_CPoseMouse_core_NcnnEngine_nativeDetect(JNIEnv* env, jclass clazz,
     jintArray pixels_, jint width, jint height, jfloat conf_thresh) {
-    if (!g_net) {
-        return nullptr;
-    }
+    if (!g_net) return nullptr;
 
-
-    jint* pixels = env->GetIntArrayElements(pixels_, nullptr);
+    jint* pixels = (jint*)env->GetPrimitiveArrayCritical(pixels_, nullptr);
     if (!pixels) return nullptr;
 
     int w = width;
@@ -288,7 +300,7 @@ Java_com_CPoseMouse_core_NcnnEngine_nativeDetect(JNIEnv* env, jclass clazz,
     int ts = g_target_size;
 
     ncnn::Mat in = ncnn::Mat::from_pixels_resize((unsigned char*)pixels, ncnn::Mat::PIXEL_RGBA2RGB, w, h, ts, ts);
-    env->ReleaseIntArrayElements(pixels_, pixels, JNI_ABORT);
+    env->ReleasePrimitiveArrayCritical(pixels_, pixels, JNI_ABORT);
 
     const float norm_vals[3] = {1.0f / 255.0f, 1.0f / 255.0f, 1.0f / 255.0f};
     in.substract_mean_normalize(0, norm_vals);
@@ -308,7 +320,6 @@ extern "C" JNIEXPORT jfloatArray JNICALL
 Java_com_CPoseMouse_core_NcnnEngine_nativeDetectBitmap(JNIEnv* env, jclass clazz,
     jobject bitmap, jint width, jint height, jfloat conf_thresh) {
     if (!g_net) return nullptr;
-
 
     AndroidBitmapInfo info;
     AndroidBitmap_getInfo(env, bitmap, &info);
@@ -361,7 +372,7 @@ Java_com_CPoseMouse_core_NcnnEngine_nativeDetectRawBgra(JNIEnv* env, jclass claz
         void release() { active = false; }
     } guard(orig_set);
 
-    jbyte* data = env->GetByteArrayElements(bgra_data, nullptr);
+    jbyte* data = (jbyte*)env->GetPrimitiveArrayCritical(bgra_data, nullptr);
     if (!data) return nullptr;
 
     int w = width;
@@ -369,7 +380,7 @@ Java_com_CPoseMouse_core_NcnnEngine_nativeDetectRawBgra(JNIEnv* env, jclass claz
     int ts = g_target_size;
 
     ncnn::Mat in = ncnn::Mat::from_pixels_resize((unsigned char*)data, ncnn::Mat::PIXEL_BGRA2RGB, w, h, ts, ts);
-    env->ReleaseByteArrayElements(bgra_data, data, JNI_ABORT);
+    env->ReleasePrimitiveArrayCritical(bgra_data, data, JNI_ABORT);
 
     const float norm_vals[3] = {1.0f / 255.0f, 1.0f / 255.0f, 1.0f / 255.0f};
     in.substract_mean_normalize(0, norm_vals);
@@ -391,7 +402,7 @@ Java_com_CPoseMouse_core_NcnnEngine_nativeDetectRawBgra(JNIEnv* env, jclass claz
     } else {
         sigaction(SIGABRT, &old_sa2, nullptr);
         g_abort_expected = 0;
-        LOGE("nativeDetectRawRgba: OMP SIGABRT suppressed, returning null");
+        LOGE("nativeDetectRawBgra: OMP SIGABRT suppressed, returning null");
         return nullptr;
     }
     sigaction(SIGABRT, &old_sa2, nullptr);
@@ -445,8 +456,102 @@ Java_com_CPoseMouse_core_NcnnEngine_nativeBenchmark(JNIEnv* env, jclass clazz, j
 }
 
 extern "C" JNIEXPORT void JNICALL
+Java_com_CPoseMouse_core_H264Decoder_nativeYuv420ToBgra(
+    JNIEnv* env, jclass clazz,
+    jbyteArray yArr, jbyteArray uArr, jbyteArray vArr,
+    jint width, jint height,
+    jint yStride, jint uvStride, jint uvPixelStride,
+    jbyteArray outBgra) {
+
+    jbyte* yBuf = (jbyte*)env->GetPrimitiveArrayCritical(yArr, nullptr);
+    jbyte* uBuf = (jbyte*)env->GetPrimitiveArrayCritical(uArr, nullptr);
+    jbyte* vBuf = (jbyte*)env->GetPrimitiveArrayCritical(vArr, nullptr);
+    jbyte* out = (jbyte*)env->GetPrimitiveArrayCritical(outBgra, nullptr);
+
+    if (!yBuf || !uBuf || !vBuf || !out) {
+        if (yBuf) env->ReleasePrimitiveArrayCritical(yArr, yBuf, JNI_ABORT);
+        if (uBuf) env->ReleasePrimitiveArrayCritical(uArr, uBuf, JNI_ABORT);
+        if (vBuf) env->ReleasePrimitiveArrayCritical(vArr, vBuf, JNI_ABORT);
+        if (out) env->ReleasePrimitiveArrayCritical(outBgra, out, JNI_ABORT);
+        return;
+    }
+
+    const int16x8_t v128 = vdupq_n_s16(128);
+    const int16x8_t v0 = vdupq_n_s16(0);
+    const int16x8_t v255 = vdupq_n_s16(255);
+
+    for (int j = 0; j < height; j++) {
+        int i = 0;
+        for (; i <= width - 8; i += 8) {
+            int yIdx = j * yStride + i;
+            int uvIdx = (j / 2) * uvStride + (i / 2) * uvPixelStride;
+
+            uint8x8_t y8 = vld1_u8((uint8_t*)(yBuf + yIdx));
+
+            uint8_t uTmp[8], vTmp[8];
+            for (int k = 0; k < 8; k++) {
+                int ui = (j / 2) * uvStride + ((i + k) / 2) * uvPixelStride;
+                uTmp[k] = *(uint8_t*)(uBuf + ui);
+                vTmp[k] = *(uint8_t*)(vBuf + ui);
+            }
+            uint8x8_t u8 = vld1_u8(uTmp);
+            uint8x8_t v8_ = vld1_u8(vTmp);
+
+            int16x8_t y16 = vreinterpretq_s16_u16(vmovl_u8(y8));
+            int16x8_t u16 = vsubq_s16(vreinterpretq_s16_u16(vmovl_u8(u8)), v128);
+            int16x8_t v16 = vsubq_s16(vreinterpretq_s16_u16(vmovl_u8(v8_)), v128);
+
+            int16x8_t r16 = vaddq_s16(y16, vshrq_n_s16(vshlq_n_s16(v16, 8), 6));
+            int16x8_t g16 = vsubq_s16(y16, vaddq_s16(vshrq_n_s16(vshlq_n_s16(u16, 5), 7), vshrq_n_s16(vshlq_n_s16(v16, 8), 6)));
+            int16x8_t b16 = vaddq_s16(y16, vshrq_n_s16(vshlq_n_s16(u16, 8), 6));
+
+            r16 = vmaxq_s16(vminq_s16(r16, v255), v0);
+            g16 = vmaxq_s16(vminq_s16(g16, v255), v0);
+            b16 = vmaxq_s16(vminq_s16(b16, v255), v0);
+
+            uint8x8_t r8 = vmovn_u16(vreinterpretq_u16_s16(r16));
+            uint8x8_t g8 = vmovn_u16(vreinterpretq_u16_s16(g16));
+            uint8x8_t b8 = vmovn_u16(vreinterpretq_u16_s16(b16));
+
+            int outBase = (j * width + i) * 4;
+            uint8_t* p = (uint8_t*)(out + outBase);
+            uint8x8x4_t bgra;
+            bgra.val[0] = b8;
+            bgra.val[1] = g8;
+            bgra.val[2] = r8;
+            bgra.val[3] = vdup_n_u8(255);
+            vst4_u8(p, bgra);
+        }
+
+        for (; i < width; i++) {
+            int yIdx = j * yStride + i;
+            int uvIdx = (j / 2) * uvStride + (i / 2) * uvPixelStride;
+            int y = (yBuf[yIdx] & 0xFF);
+            int u = (uBuf[uvIdx] & 0xFF) - 128;
+            int v = (vBuf[uvIdx] & 0xFF) - 128;
+            int r = y + ((v * 359) >> 8);
+            int g = y - ((u * 88) >> 8) - ((v * 183) >> 8);
+            int b = y + ((u * 454) >> 8);
+            r = r < 0 ? 0 : (r > 255 ? 255 : r);
+            g = g < 0 ? 0 : (g > 255 ? 255 : g);
+            b = b < 0 ? 0 : (b > 255 ? 255 : b);
+            int outIdx = (j * width + i) * 4;
+            out[outIdx] = (jbyte)b;
+            out[outIdx + 1] = (jbyte)g;
+            out[outIdx + 2] = (jbyte)r;
+            out[outIdx + 3] = (jbyte)-1;
+        }
+    }
+
+    env->ReleasePrimitiveArrayCritical(yArr, yBuf, JNI_ABORT);
+    env->ReleasePrimitiveArrayCritical(uArr, uBuf, JNI_ABORT);
+    env->ReleasePrimitiveArrayCritical(vArr, vBuf, JNI_ABORT);
+    env->ReleasePrimitiveArrayCritical(outBgra, out, JNI_ABORT);
+}
+
+extern "C" JNIEXPORT void JNICALL
 Java_com_CPoseMouse_core_NcnnEngine_nativeBgraToRgba(JNIEnv* env, jclass clazz, jbyteArray bgra_data, jint pixel_count) {
-    jbyte* data = env->GetByteArrayElements(bgra_data, nullptr);
+    jbyte* data = (jbyte*)env->GetPrimitiveArrayCritical(bgra_data, nullptr);
     if (!data) return;
     unsigned char* p = (unsigned char*)data;
     for (int i = 0; i < pixel_count; i++) {
@@ -455,7 +560,7 @@ Java_com_CPoseMouse_core_NcnnEngine_nativeBgraToRgba(JNIEnv* env, jclass clazz, 
         p[off] = p[off + 2];
         p[off + 2] = b;
     }
-    env->ReleaseByteArrayElements(bgra_data, data, 0);
+    env->ReleasePrimitiveArrayCritical(bgra_data, data, 0);
 }
 
 extern "C" JNIEXPORT void JNICALL
@@ -710,10 +815,10 @@ Java_com_CPoseMouse_core_UdpFrameReceiver_nativeKcpGetFrame(JNIEnv* env, jclass 
         return nullptr;
     }
 
-    jbyte* out = env->GetByteArrayElements(out_buf, nullptr);
+    jbyte* out = (jbyte*)env->GetPrimitiveArrayCritical(out_buf, nullptr);
     if (out) {
         memcpy(out, g_frame_buf, g_frame_len);
-        env->ReleaseByteArrayElements(out_buf, out, 0);
+        env->ReleasePrimitiveArrayCritical(out_buf, out, 0);
     }
 
     uint32_t fi32, raw_size, comp_size;

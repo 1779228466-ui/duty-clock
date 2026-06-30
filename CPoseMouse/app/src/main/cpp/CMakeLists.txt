@@ -6,4 +6,21 @@ find_package(ncnn REQUIRED)
 
 add_library(cposemouse_ncnn SHARED cposemouse_ncnn_jni.cpp ikcp.c)
 target_include_directories(cposemouse_ncnn PRIVATE ${CMAKE_SOURCE_DIR}/ncnn-20260526-android/${ANDROID_ABI}/include/ncnn)
+
+target_compile_options(cposemouse_ncnn PRIVATE
+    -O3
+    -march=armv8.4-a+fp16+dotprod
+    -mtune=cortex-a720
+    -flto=thin
+    -ffast-math
+    -fno-exceptions
+    -fno-rtti
+    -fomit-frame-pointer
+    -DNDEBUG
+)
+
+target_link_options(cposemouse_ncnn PRIVATE
+    -flto=thin
+)
+
 target_link_libraries(cposemouse_ncnn ncnn android log)

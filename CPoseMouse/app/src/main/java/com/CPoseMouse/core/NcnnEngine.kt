@@ -54,9 +54,9 @@ class NcnnEngine(private val useVulkan: Boolean = false, private val inputSize: 
                 detect(dummyBitmap, 0.5f)
                 dummyBitmap.recycle()
                 AppLog.i(TAG, "NCNN warmup detect done")
-                val avgMs = nativeBenchmark(10, 100)
+                val avgMs = nativeBenchmark(5, 20)
                 if (avgMs > 0) {
-                    AppLog.i(TAG, String.format("BENCHMARK: 100 runs avg=%.1fms FPS=%.0f Vulkan=%b", avgMs, 1000.0 / avgMs, useVulkan))
+                    AppLog.i(TAG, String.format("BENCHMARK: 20 runs avg=%.1fms FPS=%.0f Vulkan=%b", avgMs, 1000.0 / avgMs, useVulkan))
                 }
             } else {
                 AppLog.e(TAG, "NCNN loadModel failed")
@@ -116,6 +116,43 @@ class NcnnEngine(private val useVulkan: Boolean = false, private val inputSize: 
 
     override fun isInferenceFast() = lastInferMsVal < 15.0
     override fun lastInferMs() = lastInferMsVal
+
+    fun benchmarkOnly(context: Context, warmup: Int = 5, runs: Int = 20): Double? {
+        try {
+            nativeInitThread()
+            val ok = nativeLoadModel(context.assets, useVulkan, inputSize)
+            if (!ok) {
+                AppLog.e(TAG, "BENCHMARK: loadModel failed")
+                return null
+            }
+            AppLog.i(TAG, "BENCHMARK: model loaded, running warmup=$warmup runs=$runs")
+            val dummyBitmap = Bitmap.createBitmap(inputSize, inputSize, Bitmap.Config.ARGB_8888)
+            detect(dummyBitmap, 0.5f)
+            dummyBitmap.recycle()
+            val avgMs = nativeBenchmark(warmup, runs)
+            if (avgMs > 0) {
+                val fps = 1000.0 / avgMs
+                AppLog.i(TAG, String.format("BENCHMARK_RESULT: avg=%.1fms FPS=%.0f runs=%d size=%d", avgMs, fps, runs, inputSize))
+                val testBitmap = Bitmap.createBitmap(inputSize, inputSize, Bitmap.Config.ARGB_8888)
+                val results = detect(testBitmap, 0.3f)
+                testBitmap.recycle()
+                if (results.isNotEmpty()) {
+                    val p = results[0]
+                    AppLog.i(TAG, String.format("BENCHMARK_POSE: conf=%.2f kps=%d nose=(%s,%s)", p.confidence, p.keypoints.size,
+                        p.keypoints.getOrNull(0)?.let { String.format("%.1f", it.x) } ?: "?",
+                        p.keypoints.getOrNull(0)?.let { String.format("%.1f", it.y) } ?: "?"))
+                } else {
+                    AppLog.i(TAG, "BENCHMARK_POSE: no detection on dummy image (expected)")
+                }
+            }
+            nativeRelease()
+            loaded = false
+            return avgMs
+        } catch (e: Exception) {
+            AppLog.e(TAG, "BENCHMARK: exception", e)
+            return null
+        }
+    }
 
     override fun release() {
         nativeRelease()

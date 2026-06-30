@@ -315,14 +315,13 @@ Java_com_CPoseMouse_core_NcnnEngine_nativeDetectBitmap(JNIEnv* env, jclass clazz
 }
 
 extern "C" JNIEXPORT jfloatArray JNICALL
-Java_com_CPoseMouse_core_NcnnEngine_nativeDetectRawRgba(JNIEnv* env, jclass clazz,
-    jbyteArray rgba_data, jint width, jint height, jfloat conf_thresh) {
+Java_com_CPoseMouse_core_NcnnEngine_nativeDetectRawBgra(JNIEnv* env, jclass clazz,
+    jbyteArray bgra_data, jint width, jint height, jfloat conf_thresh) {
     if (!g_net) return nullptr;
 
 
-    omp_set_dynamic(0);
 
-    jbyte* data = env->GetByteArrayElements(rgba_data, nullptr);
+    jbyte* data = env->GetByteArrayElements(bgra_data, nullptr);
     if (!data) return nullptr;
 
     int w = width;
@@ -330,7 +329,7 @@ Java_com_CPoseMouse_core_NcnnEngine_nativeDetectRawRgba(JNIEnv* env, jclass claz
     int ts = g_target_size;
 
     ncnn::Mat in = ncnn::Mat::from_pixels_resize((unsigned char*)data, ncnn::Mat::PIXEL_BGRA2RGB, w, h, ts, ts);
-    env->ReleaseByteArrayElements(rgba_data, data, JNI_ABORT);
+    env->ReleaseByteArrayElements(bgra_data, data, JNI_ABORT);
 
     const float norm_vals[3] = {1.0f / 255.0f, 1.0f / 255.0f, 1.0f / 255.0f};
     in.substract_mean_normalize(0, norm_vals);
@@ -426,7 +425,7 @@ static pthread_t g_kcp_thread;
 
 static uint8_t* g_frame_buf = nullptr;
 static int g_frame_buf_size = 0;
-static volatile int g_frame_width = 0;
+
 static volatile int g_frame_len = 0;
 static volatile int g_frame_id = -1;
 static volatile int g_frame_ready = 0;
@@ -507,7 +506,7 @@ static void* kcp_recv_thread(void* arg) {
                         memcpy(g_frame_buf + 16, kcp_buf + 16, data_len);
 
                         g_frame_len = data_len + 16;
-                        g_frame_width = (int)fi32;
+
                         g_frame_id = (int)fi32;
                         g_frame_ready = 1;
                         pthread_mutex_unlock(&g_frame_mutex);
@@ -559,7 +558,7 @@ static void kcp_stop_internal() {
     g_frame_buf_size = 0;
     g_frame_ready = 0;
     g_frame_id = -1;
-    g_frame_width = 0;
+
     g_frame_len = 0;
     g_kcp_recv_count = 0;
     g_kcp_recv_bytes = 0;

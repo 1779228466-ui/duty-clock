@@ -27,7 +27,7 @@ class NcnnEngine(private val useVulkan: Boolean = false, private val inputSize: 
         external fun nativeDetectBitmap(bitmap: Bitmap, w: Int, h: Int, confThresh: Float): FloatArray?
 
         @JvmStatic
-        external fun nativeDetectRawRgba(rgbaData: ByteArray, w: Int, h: Int, confThresh: Float): FloatArray?
+        external fun nativeDetectRawBgra(bgraData: ByteArray, w: Int, h: Int, confThresh: Float): FloatArray?
 
         @JvmStatic
         external fun nativeBenchmark(warmup: Int, runs: Int): Double
@@ -42,8 +42,6 @@ class NcnnEngine(private val useVulkan: Boolean = false, private val inputSize: 
         external fun nativeBgraToRgba(bgraData: ByteArray, pixelCount: Int)
     }
 
-    private val pixels = IntArray(640 * 640)
-    private val bufSize = inputSize * inputSize
 
     override fun loadModel(context: Context): Boolean {
         try {
@@ -124,11 +122,11 @@ class NcnnEngine(private val useVulkan: Boolean = false, private val inputSize: 
         loaded = false
     }
 
-    fun detectRawRgba(rgbaData: ByteArray, w: Int, h: Int, confThresh: Float): List<PoseResult> {
+    fun detectRawBgra(bgraData: ByteArray, w: Int, h: Int, confThresh: Float): List<PoseResult> {
         if (!loaded) return emptyList()
         try {
             val t0 = System.nanoTime()
-            val result = nativeDetectRawRgba(rgbaData, w, h, confThresh) ?: return emptyList()
+            val result = nativeDetectRawBgra(bgraData, w, h, confThresh) ?: return emptyList()
             val t1 = System.nanoTime()
             lastInferMsVal = (t1 - t0) / 1e6
             logCounter++
@@ -140,7 +138,7 @@ class NcnnEngine(private val useVulkan: Boolean = false, private val inputSize: 
             val scaleY = h.toFloat() / inputSize
             return parseDetectResult(result, scaleX, scaleY)
         } catch (e: Exception) {
-            AppLog.e(TAG, "detectRawRgba failed", e)
+            AppLog.e(TAG, "detectRawBgra failed", e)
             return emptyList()
         }
     }

@@ -86,6 +86,7 @@ class ScreenCapture(
             }
         }, captureHandler)
 
+        @Suppress("DEPRECATION")
         virtualDisplay = proj.createVirtualDisplay(
             "ScreenCapture",
             captureWidth, captureHeight, getDensityDpi(),

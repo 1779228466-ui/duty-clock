@@ -134,7 +134,9 @@ object AppLog {
             while (_logs.size > MAX_LOGS) _logs.removeAt(0)
         }
         try {
-            logFileWriter?.println(line)
+            synchronized(this) {
+                logFileWriter?.println(line)
+            }
         } catch (_: Exception) {}
         broadcast(line)
     }
@@ -158,11 +160,15 @@ object AppLog {
 
     fun clear() {
         synchronized(_logs) { _logs.clear() }
-        try {
-            logFileWriter?.close()
-            val file = appContext?.filesDir?.let { File(it, LOG_FILE) }
-            file?.delete()
-            logFileWriter = file?.let { PrintWriter(FileWriter(it, true), true) }
-        } catch (_: Exception) {}
+        synchronized(this) {
+            try {
+                logFileWriter?.close()
+                val file = appContext?.filesDir?.let { File(it, LOG_FILE) }
+                file?.delete()
+                logFileWriter = file?.let { PrintWriter(FileWriter(it, true), true) }
+            } catch (e: Exception) {
+                android.util.Log.e("AppLog", "clear failed", e)
+            }
+        }
     }
 }

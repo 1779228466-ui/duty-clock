@@ -37,7 +37,7 @@ class InferenceService : Service() {
         if (foregroundStarted) return
         foregroundStarted = true
         val serviceType = if (useUdpMode) {
-            android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+            android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
         } else {
             android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
         }
@@ -190,19 +190,16 @@ class InferenceService : Service() {
 
     override fun onDestroy() {
         loop?.running = false
+        try { Thread.sleep(100) } catch (_: InterruptedException) {}
         loop?.udpTargetSender?.stop()
         udpReceiver?.stop()
         InferenceServiceHolder.loop = null
         InferenceServiceHolder.adaptivePidController = null
-
         InferenceServiceHolder.lts = null
-
         InferenceServiceHolder.capture = null
-
         capture?.stop()
         engine?.release()
         mouse?.unregister()
-
         projection?.stop()
         AppLog.i(TAG, "InferenceService destroyed")
         super.onDestroy()

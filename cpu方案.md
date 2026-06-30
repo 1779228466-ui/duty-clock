@@ -475,6 +475,45 @@ D:\HuaWei\CPU_pose\CPoseMouse\          (独立项目根目录)
 
 ---
 
+## 第二轮代码规范性检查报告
+
+> 检查日期：2026-06-30，基于4线程+FP16优化后的代码
+
+### 高严重度问题（2个）
+
+| 编号 | 文件 | 行号 | 问题 | 状态 |
+|------|------|------|------|------|
+| H2-1 | UdpFrameReceiver.kt | 305 | `getFrame()`返回frameBuf引用，锁释放后接收线程可能写入，导致半新半旧帧数据 | ✅已修复 |
+| H2-2 | InferenceLoop.kt | 170 | `reusableBitmap`被recycle时`latestFrameBitmap`仍指向它，UI线程可能渲染已回收Bitmap崩溃 | ✅已修复 |
+
+### 中严重度问题（7个）
+
+| 编号 | 文件 | 行号 | 问题 | 状态 |
+|------|------|------|------|------|
+| M2-1 | AppLog.kt | 137 | logFileWriter写入无同步保护 | ✅已修复 |
+| M2-2 | InferenceLoop.kt | 184 | reusableBitmap被UI线程和推理线程并发访问（画面撕裂） | ✅已修复 |
+| M2-3 | NcnnEngine.kt | 30 | `nativeDetectRawRgba`命名误导，实际处理BGRA | ✅已修复 |
+| M2-4 | ScreenCapture.kt | 92 | 废弃API缺少`@Suppress("DEPRECATION")` | ✅已修复 |
+| M2-5 | cposemouse_ncnn_jni.cpp | 32 | SIGABRT全局状态非线程安全 | ⏳当前不会并发调用，低风险 |
+| M2-6 | InferenceLoop.kt | 119 | `runUdpFrame()`缺少try-catch，异常导致推理线程崩溃 | ✅已修复 |
+| M2-7 | UdpFrameReceiver.kt | 104 | `processJpegFrame`从未被调用（死代码+重复） | ✅已修复 |
+
+### 低严重度问题（9个）
+
+| 编号 | 文件 | 问题 | 状态 |
+|------|------|------|------|
+| L2-1 | NcnnEngine.kt:45-46 | `pixels`和`bufSize`未使用（死代码） | ✅已修复 |
+| L2-2 | cposemouse_ncnn_jni.cpp:429 | `g_frame_width`从未被读取且赋值语义错误 | ✅已修复 |
+| L2-3 | MainActivity.kt:83 | `capture`变量未实际使用 | ✅已修复 |
+| L2-4 | InferenceService.kt | UDP模式应用CONNECTED_DEVICE前台服务类型 | ✅已修复 |
+| L2-5 | InferenceService.kt | onDestroy资源释放顺序（应先等线程退出） | ✅已修复 |
+| L2-6 | AppLog.kt:159 | clear()异常被静默吞没 | ✅已修复 |
+| L2-7 | AndroidManifest.xml:24 | label硬编码应使用@string | ✅已修复 |
+| L2-8 | cposemouse_ncnn_jni.cpp:323 | 冗余omp_set_dynamic(0) | ✅已修复 |
+| L2-9 | H264Decoder.kt:216 | imageToBgra逐像素转换性能差 | ⏳阶段6 NEON优化 |
+
+---
+
 ## 性能基准
 
 | 配置 | 推理延迟 | FPS | 备注 |

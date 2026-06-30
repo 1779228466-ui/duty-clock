@@ -117,6 +117,7 @@ class InferenceLoop(
     }
 
     private fun runUdpFrame(): Boolean {
+        try {
         val recv = udpReceiver ?: return false
 
         val t0 = System.nanoTime()
@@ -137,7 +138,7 @@ class InferenceLoop(
 
         val ncnn = detector as? NcnnEngine
         val poses = if (ncnn != null) {
-            ncnn.detectRawRgba(localBuf, w, w, confThreshold)
+            ncnn.detectRawBgra(localBuf, w, w, confThreshold)
         } else {
             var inferBmp = inferBitmap
             if (inferBmp == null || inferBmp.width != w || inferBmp.height != w) {
@@ -169,6 +170,7 @@ class InferenceLoop(
         if (showFrameBitmap) {
             var bmp = reusableBitmap
             if (bmp == null || bmp.width != w || bmp.height != w) {
+                latestFrameBitmap = null
                 bmp?.recycle()
                 bmp = Bitmap.createBitmap(w, w, Bitmap.Config.ARGB_8888)
                 reusableBitmap = bmp
@@ -219,6 +221,10 @@ class InferenceLoop(
         logFrameCount++
 
         return true
+        } catch (e: Exception) {
+            AppLog.e(TAG, "runUdpFrame error", e)
+            return false
+        }
     }
 
     private fun resetController() {

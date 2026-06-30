@@ -101,36 +101,6 @@ class UdpFrameReceiver(private val port: Int = 19876) {
         }
     }
 
-    private fun processJpegFrame(frameId: Int, w: Int, jpegLen: Int) {
-        try {
-            val bmp = BitmapFactory.decodeByteArray(jpegBuf, 0, jpegLen)
-            if (bmp != null && bmp.width == w && bmp.height == w) {
-                val pixels = IntArray(w * w)
-                bmp.getPixels(pixels, 0, w, 0, 0, w, w)
-                val bgra = ByteArray(w * w * 4)
-                for (i in pixels.indices) {
-                    val p = pixels[i]
-                    bgra[i * 4 + 0] = (p and 0xFF).toByte()
-                    bgra[i * 4 + 1] = ((p shr 8) and 0xFF).toByte()
-                    bgra[i * 4 + 2] = ((p shr 16) and 0xFF).toByte()
-                    bgra[i * 4 + 3] = ((p shr 24) and 0xFF).toByte()
-                }
-                bmp.recycle()
-                synchronized(lock) {
-                    System.arraycopy(bgra, 0, frameBuf, 0, w * w * 4)
-                    latestFrameId = frameId
-                    latestWidth = w
-                    latestHeight = w
-                }
-                frameCount++
-            } else {
-                if (bmp != null) bmp.recycle()
-                AppLog.w(TAG, "jpeg decode mismatch exp=${w}x${w} got=${bmp?.width}x${bmp?.height}")
-            }
-        } catch (e: Exception) {
-            AppLog.w(TAG, "jpeg decode error: ${e.message}")
-        }
-    }
 
     private fun startLegacyMode() {
         Thread({
@@ -305,7 +275,10 @@ class UdpFrameReceiver(private val port: Int = 19876) {
     fun getFrame(): Triple<Int, Int, ByteArray>? {
         synchronized(lock) {
             if (latestWidth == 0) return null
-            return Triple(latestFrameId, latestWidth, frameBuf)
+            val size = latestWidth * latestWidth * 4
+            val copy = ByteArray(size)
+            System.arraycopy(frameBuf, 0, copy, 0, size)
+            return Triple(latestFrameId, latestWidth, copy)
         }
     }
 

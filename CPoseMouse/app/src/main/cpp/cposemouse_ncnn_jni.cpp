@@ -444,6 +444,7 @@ static void* kcp_recv_thread(void* arg) {
 
     std::vector<uint8_t> recv_buf_vec(65536);
     uint8_t* recv_buf = recv_buf_vec.data();
+    size_t recv_buf_size = recv_buf_vec.size();
     struct sockaddr_in from_addr;
     socklen_t from_len = sizeof(from_addr);
 
@@ -453,7 +454,7 @@ static void* kcp_recv_thread(void* arg) {
         int batch_count = 0;
         while (g_kcp_running) {
             socklen_t fl = sizeof(from_addr);
-            ssize_t n = recvfrom(g_kcp_sock, recv_buf, sizeof(recv_buf), MSG_DONTWAIT,
+            ssize_t n = recvfrom(g_kcp_sock, recv_buf, recv_buf_size, MSG_DONTWAIT,
                                  (struct sockaddr*)&from_addr, &fl);
             if (n <= 0) break;
 

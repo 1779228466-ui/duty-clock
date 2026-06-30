@@ -54,9 +54,9 @@ class NcnnEngine(private val useVulkan: Boolean = false, private val inputSize: 
                 detect(dummyBitmap, 0.5f)
                 dummyBitmap.recycle()
                 AppLog.i(TAG, "NCNN warmup detect done")
-                val avgMs = nativeBenchmark(5, 20)
+                val avgMs = nativeBenchmark(10, 100)
                 if (avgMs > 0) {
-                    AppLog.i(TAG, String.format("BENCHMARK: 20 runs avg=%.1fms FPS=%.0f Vulkan=%b", avgMs, 1000.0 / avgMs, useVulkan))
+                    AppLog.i(TAG, String.format("BENCHMARK: 100 runs avg=%.1fms FPS=%.0f Vulkan=%b", avgMs, 1000.0 / avgMs, useVulkan))
                 }
             } else {
                 AppLog.e(TAG, "NCNN loadModel failed")

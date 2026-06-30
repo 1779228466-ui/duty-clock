@@ -46,6 +46,34 @@ static void suppress_omp_affinity() {
     omp_set_dynamic(0);
 }
 
+static void bind_to_mid_cluster() {
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(0, &cpuset);
+    CPU_SET(1, &cpuset);
+    CPU_SET(2, &cpuset);
+    CPU_SET(3, &cpuset);
+    if (sched_setaffinity(0, sizeof(cpuset), &cpuset) == 0) {
+        LOGI("KCP thread bound to mid-freq cluster CPU0-3");
+    } else {
+        LOGW("Failed to bind to CPU0-3: %s", strerror(errno));
+    }
+}
+
+static void bind_to_high_cluster() {
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(4, &cpuset);
+    CPU_SET(5, &cpuset);
+    CPU_SET(6, &cpuset);
+    CPU_SET(7, &cpuset);
+    if (sched_setaffinity(0, sizeof(cpuset), &cpuset) == 0) {
+        LOGI("Bound to high-freq cluster CPU4-7 (X4@3.25G + 3xA720@2.85G)");
+    } else {
+        LOGW("Failed to bind to CPU4-7: %s", strerror(errno));
+    }
+}
+
 JNIEXPORT jint JNI_OnLoad(JavaVM* vm, void* reserved) {
     suppress_omp_affinity();
 
@@ -158,14 +186,8 @@ Java_com_CPoseMouse_core_NcnnEngine_nativeLoadModel(JNIEnv* env, jclass clazz, j
     opt.use_fp16_arithmetic = true;
     opt.use_int8_storage = true;
 
-    cpu_set_t cpuset;
-    CPU_ZERO(&cpuset);
-    CPU_SET(4, &cpuset);
-    CPU_SET(5, &cpuset);
-    CPU_SET(6, &cpuset);
-    CPU_SET(7, &cpuset);
-    sched_setaffinity(0, sizeof(cpuset), &cpuset);
-    LOGI("Bound to high-freq cluster CPU4-7 (X4@3.25G + 3xA720@2.85G)");
+    LOGI("NCNN opt: threads=%d fp16_packed=%d fp16_storage=%d fp16_arithmetic=%d int8=%d",
+         opt.num_threads, opt.use_fp16_packed, opt.use_fp16_storage, opt.use_fp16_arithmetic, opt.use_int8_storage);
 
 
 
@@ -257,6 +279,7 @@ Java_com_CPoseMouse_core_NcnnEngine_nativeDetect(JNIEnv* env, jclass clazz,
         return nullptr;
     }
 
+
     jint* pixels = env->GetIntArrayElements(pixels_, nullptr);
     if (!pixels) return nullptr;
 
@@ -285,6 +308,7 @@ extern "C" JNIEXPORT jfloatArray JNICALL
 Java_com_CPoseMouse_core_NcnnEngine_nativeDetectBitmap(JNIEnv* env, jclass clazz,
     jobject bitmap, jint width, jint height, jfloat conf_thresh) {
     if (!g_net) return nullptr;
+
 
     AndroidBitmapInfo info;
     AndroidBitmap_getInfo(env, bitmap, &info);
@@ -319,7 +343,23 @@ Java_com_CPoseMouse_core_NcnnEngine_nativeDetectRawBgra(JNIEnv* env, jclass claz
     jbyteArray bgra_data, jint width, jint height, jfloat conf_thresh) {
     if (!g_net) return nullptr;
 
+    cpu_set_t orig_set;
+    sched_getaffinity(0, sizeof(orig_set), &orig_set);
+    cpu_set_t high_set;
+    CPU_ZERO(&high_set);
+    CPU_SET(4, &high_set);
+    CPU_SET(5, &high_set);
+    CPU_SET(6, &high_set);
+    CPU_SET(7, &high_set);
+    sched_setaffinity(0, sizeof(high_set), &high_set);
 
+    struct AffinityGuard {
+        cpu_set_t orig;
+        bool active;
+        AffinityGuard(const cpu_set_t& o) : orig(o), active(true) {}
+        ~AffinityGuard() { if (active) sched_setaffinity(0, sizeof(orig), &orig); }
+        void release() { active = false; }
+    } guard(orig_set);
 
     jbyte* data = env->GetByteArrayElements(bgra_data, nullptr);
     if (!data) return nullptr;
@@ -366,6 +406,17 @@ extern "C" JNIEXPORT jdouble JNICALL
 Java_com_CPoseMouse_core_NcnnEngine_nativeBenchmark(JNIEnv* env, jclass clazz, jint warmup, jint runs) {
     if (!g_net) return -1.0;
 
+    cpu_set_t orig_set;
+    sched_getaffinity(0, sizeof(orig_set), &orig_set);
+    cpu_set_t high_set;
+    CPU_ZERO(&high_set);
+    CPU_SET(4, &high_set);
+    CPU_SET(5, &high_set);
+    CPU_SET(6, &high_set);
+    CPU_SET(7, &high_set);
+    sched_setaffinity(0, sizeof(high_set), &high_set);
+    LOGI("Benchmark bound to CPU4-7");
+
     int ts = g_target_size;
     ncnn::Mat in(ts, ts, 3);
     in.fill(0.5f);
@@ -389,6 +440,7 @@ Java_com_CPoseMouse_core_NcnnEngine_nativeBenchmark(JNIEnv* env, jclass clazz, j
         total_ms += ms;
     }
 
+    sched_setaffinity(0, sizeof(orig_set), &orig_set);
     return total_ms / runs;
 }
 
@@ -439,8 +491,9 @@ static int kcp_udp_send(const char* buf, int len, struct IKCPCB* kcp, void* user
     return (ret < 0) ? -1 : 0;
 }
 
+
 static void* kcp_recv_thread(void* arg) {
-    suppress_omp_affinity();
+    bind_to_mid_cluster();
 
     std::vector<uint8_t> recv_buf_vec(65536);
     uint8_t* recv_buf = recv_buf_vec.data();

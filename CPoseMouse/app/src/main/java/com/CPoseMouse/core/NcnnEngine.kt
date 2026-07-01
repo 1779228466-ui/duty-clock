@@ -3,7 +3,7 @@
 import android.content.Context
 import android.graphics.Bitmap
 
-class NcnnEngine(private val useVulkan: Boolean = true, private val inputSize: Int = 320) : InferenceEngine {
+class NcnnEngine(private val useVulkan: Boolean = false, private val inputSize: Int = 320) : InferenceEngine {
     override val name = if (useVulkan) "NCNN+Vulkan" else "NCNN+CPU"
     private var loaded = false
     private var lastInferMsVal = 0.0

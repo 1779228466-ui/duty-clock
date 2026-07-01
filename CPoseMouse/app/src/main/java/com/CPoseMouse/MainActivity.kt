@@ -66,39 +66,45 @@ fun BenchmarkScreen(activity: ComponentActivity) {
     var status by remember { mutableStateOf("准备中...") }
     var result by remember { mutableStateOf("") }
     var detail by remember { mutableStateOf("") }
+    var engineName by remember { mutableStateOf("") }
 
     LaunchedEffect(Unit) {
         status = "持续推理中..."
         withContext(Dispatchers.IO) {
-            val engine = NcnnEngine(useVulkan = true, inputSize = 320)
-            engine.benchmarkRunning = true
-            engine.benchmarkContinuous(context, durationSec = 60)
-            var lastFrames = 0
-            var lastTime = System.currentTimeMillis()
-            while (engine.benchmarkRunning) {
-                delay(2000)
-                val now = System.currentTimeMillis()
-                val dt = (now - lastTime) / 1000.0
-                val log = AppLog.logs.lastOrNull { it.contains("BENCH_C:") && !it.contains("start") }
-                if (log != null) {
-                    detail = log.substringAfter("BENCH_C: ")
+            val movenetEngine = MoveNetEngine()
+            try {
+                movenetEngine.benchmarkRunning = true
+                engineName = movenetEngine.name
+                movenetEngine.benchmarkContinuous(context, durationSec = 60)
+                var lastFrames = 0
+                var lastTime = System.currentTimeMillis()
+                while (movenetEngine.benchmarkRunning) {
+                    delay(2000)
+                    val now = System.currentTimeMillis()
+                    val dt = (now - lastTime) / 1000.0
+                    val log = AppLog.logs.lastOrNull { it.contains("BENCH_C:") && !it.contains("start") }
+                    if (log != null) {
+                        detail = log.substringAfter("BENCH_C: ")
+                    }
+                    lastTime = now
                 }
-                lastTime = now
-            }
-            val doneLog = AppLog.logs.lastOrNull { it.contains("BENCH_C_DONE:") }
-            if (doneLog != null) {
-                result = doneLog.substringAfter("BENCH_C_DONE: ")
-                status = "完成"
-            } else {
-                result = "完成"
-                status = "完成"
+                val doneLog = AppLog.logs.lastOrNull { it.contains("BENCH_C_DONE:") }
+                if (doneLog != null) {
+                    result = doneLog.substringAfter("BENCH_C_DONE: ")
+                    status = "完成"
+                } else {
+                    result = "完成"
+                    status = "完成"
+                }
+            } finally {
+                movenetEngine.release()
             }
         }
     }
 
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(32.dp)) {
-            Text("NCNN 持续Benchmark", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color(0xFF555555))
+            Text("MoveNet+OpenCL 持续Benchmark", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color(0xFF555555))
             Spacer(modifier = Modifier.height(16.dp))
             Text(status, fontSize = 16.sp, color = Color(0xFF7E7E7E))
             if (detail.isNotEmpty()) {
@@ -138,7 +144,7 @@ fun MainApp() {
     var fpsText by remember { mutableStateOf("") }
 
     val btMouse = remember { BluetoothHidMouse(context) }
-    var engineType by remember { mutableStateOf("ncnn_cpu") }
+    var engineType by remember { mutableStateOf("movenet_gpu") }
     var useUdpMode by remember { mutableStateOf(true) }
     var capture by remember { mutableStateOf<ScreenCapture?>(null) }
     var loop by remember { mutableStateOf<InferenceLoop?>(null) }
@@ -182,7 +188,7 @@ fun MainApp() {
             serviceIntent.putExtra("resultCode", result.resultCode)
             serviceIntent.putExtra("data", result.data!!)
             serviceIntent.putExtra("engine", engineType)
-            serviceIntent.putExtra("inputSize", 320)
+            serviceIntent.putExtra("inputSize", 256)
             serviceIntent.putExtra("useUdp", useUdpMode)
             context.startForegroundService(serviceIntent)
             isRunning = true; statusText = "服务启动中..."
@@ -293,7 +299,7 @@ fun MonitorScreen(
                             if (useUdpMode) {
                                 val serviceIntent = Intent(context, com.CPoseMouse.service.InferenceService::class.java)
                                 serviceIntent.putExtra("engine", engineType)
-            serviceIntent.putExtra("inputSize", 320)
+                                serviceIntent.putExtra("inputSize", 256)
                                 serviceIntent.putExtra("useUdp", true)
                                 context.startForegroundService(serviceIntent)
                                 onRunningChange(true); onStatusChange("UDP模式启动中...")
@@ -313,7 +319,7 @@ fun MonitorScreen(
                 Spacer(modifier = Modifier.height(8.dp))
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     StatusBadge("BT", when { btConnected -> "已连接"; hidRegistered -> "未连接"; else -> "未注册" }, btConnected)
-                    TechBadge("NCNN+CPU")
+                    TechBadge(if (engineType == "movenet_gpu") "MoveNet+GPU" else "NCNN+CPU")
                     TechBadge(if (useUdpMode) "UDP模式" else "截屏模式")
                 }
                 if (isRunning) { Spacer(modifier = Modifier.height(4.dp)); Text(fpsText, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = textPrimary) }
@@ -338,7 +344,7 @@ fun MonitorScreen(
             Card(modifier = Modifier.fillMaxWidth().weight(1f), colors = CardDefaults.cardColors(containerColor = cardBg), shape = RoundedCornerShape(12.dp), elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)) {
                 Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text("推理引擎", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = textPrimary)
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) { EngineChip("ncnn_cpu", "NCNN+CPU", engineType == "ncnn_cpu", onEngineTypeChange) }
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) { EngineChip("movenet_gpu", "MoveNet+GPU", engineType == "movenet_gpu", onEngineTypeChange); EngineChip("ncnn_cpu", "NCNN+CPU", engineType == "ncnn_cpu", onEngineTypeChange) }
                     Spacer(modifier = Modifier.height(4.dp))
                     Text("图传模式", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = textPrimary)
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) { SegmentButton("截屏模式", !useUdpMode, { onUdpModeChange(false) }, Modifier.weight(1f)); SegmentButton("OBS+UDP", useUdpMode, { onUdpModeChange(true) }, Modifier.weight(1f)) }

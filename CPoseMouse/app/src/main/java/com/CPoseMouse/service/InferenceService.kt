@@ -51,7 +51,7 @@ class InferenceService : Service() {
         }
 
         val engineType = intent?.getStringExtra("engine") ?: "ncnn_cpu"
-        val inputSize = intent?.getIntExtra("inputSize", 320) ?: 320
+        val inputSize = intent?.getIntExtra("inputSize", 256) ?: 256
         val useUdp = intent?.getBooleanExtra("useUdp", false) ?: false
         useUdpMode = useUdp
         startForegroundService()
@@ -81,16 +81,14 @@ class InferenceService : Service() {
         AppLog.i(TAG, "startUdpMode: engineType=$engineType inputSize=$inputSize")
         Thread {
 
-            val det = NcnnEngine(useVulkan = true, inputSize = inputSize)
+            val det = createEngine(engineType, inputSize)
             engine = det
 
-            val ok = det.loadModel(this)
-            if (!ok) {
-                AppLog.e(TAG, "Model load failed, trying CPU fallback")
+            if (!det.loadModel(this)) {
+                AppLog.e(TAG, "Engine load failed: ${det.name}, trying CPU fallback")
                 val cpuDet = NcnnEngine(useVulkan = false, inputSize = inputSize)
                 engine = cpuDet
-                val cpuOk = cpuDet.loadModel(this)
-                if (!cpuOk) {
+                if (!cpuDet.loadModel(this)) {
                     AppLog.e(TAG, "CPU fallback also failed")
                     stopSelf()
                     return@Thread
@@ -163,16 +161,14 @@ class InferenceService : Service() {
             sc.start()
             AppLog.i(TAG, "ScreenCapture started ${metrics.widthPixels}x${metrics.heightPixels}")
 
-            val det = NcnnEngine(useVulkan = true, inputSize = inputSize)
+            val det = createEngine(engineType, inputSize)
             engine = det
 
-            val ok = det.loadModel(this)
-            if (!ok) {
-                AppLog.e(TAG, "Model load failed, trying CPU fallback")
+            if (!det.loadModel(this)) {
+                AppLog.e(TAG, "Engine load failed: ${det.name}, trying CPU fallback")
                 val cpuDet = NcnnEngine(useVulkan = false, inputSize = inputSize)
                 engine = cpuDet
-                val cpuOk = cpuDet.loadModel(this)
-                if (!cpuOk) {
+                if (!cpuDet.loadModel(this)) {
                     AppLog.e(TAG, "CPU fallback also failed")
                     stopSelf()
                     return@Thread
@@ -235,6 +231,18 @@ class InferenceService : Service() {
     companion object {
         private const val TAG = "InferenceService"
         private const val CHANNEL_ID = "posemouse_service"
+
+        fun createEngine(engineType: String, inputSize: Int): InferenceEngine {
+            return when (engineType) {
+                "movenet_gpu" -> MoveNetEngine()
+                "ncnn_cpu" -> NcnnEngine(useVulkan = false, inputSize = inputSize)
+                else -> {
+                    val movenet = MoveNetEngine()
+                    if (movenet.isGpuAvailable()) movenet
+                    else NcnnEngine(useVulkan = false, inputSize = inputSize)
+                }
+            }
+        }
     }
 }
 

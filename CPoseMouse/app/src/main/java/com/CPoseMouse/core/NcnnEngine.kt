@@ -3,7 +3,7 @@
 import android.content.Context
 import android.graphics.Bitmap
 
-class NcnnEngine(private val useVulkan: Boolean = false, private val inputSize: Int = 320) : InferenceEngine {
+class NcnnEngine(private val useVulkan: Boolean = true, private val inputSize: Int = 320) : InferenceEngine {
     override val name = if (useVulkan) "NCNN+Vulkan" else "NCNN+CPU"
     private var loaded = false
     private var lastInferMsVal = 0.0
@@ -40,6 +40,9 @@ class NcnnEngine(private val useVulkan: Boolean = false, private val inputSize: 
 
         @JvmStatic
         external fun nativeBgraToRgba(bgraData: ByteArray, pixelCount: Int)
+
+        @JvmStatic
+        external fun nativeIsVulkanAvailable(): Boolean
     }
 
 
@@ -112,6 +115,12 @@ class NcnnEngine(private val useVulkan: Boolean = false, private val inputSize: 
             AppLog.e(TAG, "detect failed", e)
             return emptyList()
         }
+    }
+
+    override fun isGpuAvailable(): Boolean {
+        return if (useVulkan) {
+            try { nativeIsVulkanAvailable() } catch (_: Exception) { false }
+        } else false
     }
 
     override fun isInferenceFast() = lastInferMsVal < 15.0
@@ -209,7 +218,7 @@ class NcnnEngine(private val useVulkan: Boolean = false, private val inputSize: 
         loaded = false
     }
 
-    fun detectRawBgra(bgraData: ByteArray, w: Int, h: Int, confThresh: Float): List<PoseResult> {
+    override fun detectBgra(bgraData: ByteArray, w: Int, h: Int, confThresh: Float): List<PoseResult> {
         if (!loaded) return emptyList()
         try {
             val t0 = System.nanoTime()

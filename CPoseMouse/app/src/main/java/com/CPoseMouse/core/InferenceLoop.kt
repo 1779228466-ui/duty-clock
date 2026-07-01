@@ -136,32 +136,7 @@ class InferenceLoop(
         System.arraycopy(buf, 0, localBuf, 0, size)
         val t2 = System.nanoTime()
 
-        val ncnn = detector as? NcnnEngine
-        val poses = if (ncnn != null) {
-            ncnn.detectRawBgra(localBuf, w, w, confThreshold)
-        } else {
-            var inferBmp = inferBitmap
-            if (inferBmp == null || inferBmp.width != w || inferBmp.height != w) {
-                inferBmp?.recycle()
-                inferBmp = Bitmap.createBitmap(w, w, Bitmap.Config.ARGB_8888)
-                inferBitmap = inferBmp
-            }
-            NcnnEngine.nativeBgraToRgba(localBuf, w * w)
-            val bb = java.nio.ByteBuffer.wrap(localBuf, 0, w * w * 4)
-            inferBmp.copyPixelsFromBuffer(bb)
-            val result = detector.detect(inferBmp, confThreshold)
-            if (showFrameBitmap) {
-                var dispBmp = reusableBitmap
-                if (dispBmp == null || dispBmp.width != w || dispBmp.height != w) {
-                    dispBmp?.recycle()
-                    dispBmp = Bitmap.createBitmap(w, w, Bitmap.Config.ARGB_8888)
-                    reusableBitmap = dispBmp
-                }
-                val canvas = android.graphics.Canvas(dispBmp)
-                canvas.drawBitmap(inferBmp, 0f, 0f, null)
-            }
-            result
-        }
+        val poses = detector.detectBgra(localBuf, w, w, confThreshold)
         val t3 = System.nanoTime()
 
         processPoses(poses, System.nanoTime())
@@ -176,11 +151,9 @@ class InferenceLoop(
                 reusableBitmap = bmp
             }
 
-            if (ncnn != null) {
-                NcnnEngine.nativeBgraToRgba(localBuf, w * w)
-                val bb = java.nio.ByteBuffer.wrap(localBuf, 0, w * w * 4)
-                bmp.copyPixelsFromBuffer(bb)
-            }
+            NcnnEngine.nativeBgraToRgba(localBuf, w * w)
+            val bb = java.nio.ByteBuffer.wrap(localBuf, 0, w * w * 4)
+            bmp.copyPixelsFromBuffer(bb)
             bmp.prepareToDraw()
 
         val canvas = Canvas(bmp)

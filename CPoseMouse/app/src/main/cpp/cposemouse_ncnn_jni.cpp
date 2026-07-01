@@ -208,6 +208,22 @@ Java_com_CPoseMouse_core_NcnnEngine_nativeLoadModel(JNIEnv* env, jclass clazz, j
 
     g_net->opt = opt;
 
+#if NCNN_VULKAN
+    if (g_use_gpu) {
+        int gpu_count = ncnn::get_gpu_count();
+        if (gpu_count > 0) {
+            ncnn::create_gpu_instance();
+            g_net->set_vulkan_device(ncnn::get_gpu_device());
+            LOGI("Vulkan GPU enabled: gpu_count=%d", gpu_count);
+        } else {
+            LOGW("Vulkan GPU not available, falling back to CPU");
+            g_use_gpu = false;
+            opt.use_vulkan_compute = false;
+            g_net->opt = opt;
+        }
+    }
+#endif
+
     const char* param_name;
     const char* bin_name;
     if (input_size == 128) {
@@ -563,8 +579,22 @@ Java_com_CPoseMouse_core_NcnnEngine_nativeBgraToRgba(JNIEnv* env, jclass clazz, 
     env->ReleasePrimitiveArrayCritical(bgra_data, data, 0);
 }
 
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_CPoseMouse_core_NcnnEngine_nativeIsVulkanAvailable(JNIEnv* env, jclass clazz) {
+#if NCNN_VULKAN
+    return ncnn::get_gpu_count() > 0 ? JNI_TRUE : JNI_FALSE;
+#else
+    return JNI_FALSE;
+#endif
+}
+
 extern "C" JNIEXPORT void JNICALL
 Java_com_CPoseMouse_core_NcnnEngine_nativeRelease(JNIEnv* env, jclass clazz) {
+#if NCNN_VULKAN
+    if (g_use_gpu) {
+        ncnn::destroy_gpu_instance();
+    }
+#endif
     if (g_net) {
         delete g_net;
         g_net = nullptr;

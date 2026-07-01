@@ -81,14 +81,20 @@ class InferenceService : Service() {
         AppLog.i(TAG, "startUdpMode: engineType=$engineType inputSize=$inputSize")
         Thread {
 
-            val det = NcnnEngine(useVulkan = false, inputSize = inputSize)
+            val det = NcnnEngine(useVulkan = true, inputSize = inputSize)
             engine = det
 
             val ok = det.loadModel(this)
             if (!ok) {
-                AppLog.e(TAG, "Model load failed")
-                stopSelf()
-                return@Thread
+                AppLog.e(TAG, "Model load failed, trying CPU fallback")
+                val cpuDet = NcnnEngine(useVulkan = false, inputSize = inputSize)
+                engine = cpuDet
+                val cpuOk = cpuDet.loadModel(this)
+                if (!cpuOk) {
+                    AppLog.e(TAG, "CPU fallback also failed")
+                    stopSelf()
+                    return@Thread
+                }
             }
 
             val btMouse = BluetoothHidMouse(this@InferenceService)
@@ -157,14 +163,20 @@ class InferenceService : Service() {
             sc.start()
             AppLog.i(TAG, "ScreenCapture started ${metrics.widthPixels}x${metrics.heightPixels}")
 
-            val det = NcnnEngine(useVulkan = false, inputSize = inputSize)
+            val det = NcnnEngine(useVulkan = true, inputSize = inputSize)
             engine = det
 
             val ok = det.loadModel(this)
             if (!ok) {
-                AppLog.e(TAG, "Model load failed")
-                stopSelf()
-                return@Thread
+                AppLog.e(TAG, "Model load failed, trying CPU fallback")
+                val cpuDet = NcnnEngine(useVulkan = false, inputSize = inputSize)
+                engine = cpuDet
+                val cpuOk = cpuDet.loadModel(this)
+                if (!cpuOk) {
+                    AppLog.e(TAG, "CPU fallback also failed")
+                    stopSelf()
+                    return@Thread
+                }
             }
 
             val btMouse = BluetoothHidMouse(this@InferenceService)

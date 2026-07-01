@@ -70,7 +70,7 @@ fun BenchmarkScreen(activity: ComponentActivity) {
     LaunchedEffect(Unit) {
         status = "持续推理中..."
         withContext(Dispatchers.IO) {
-            val engine = NcnnEngine(inputSize = 320)
+            val engine = NcnnEngine(useVulkan = true, inputSize = 320)
             engine.benchmarkRunning = true
             engine.benchmarkContinuous(context, durationSec = 60)
             var lastFrames = 0

@@ -602,6 +602,66 @@ Java_com_CPoseMouse_core_NcnnEngine_nativeRelease(JNIEnv* env, jclass clazz) {
     LOGI("NCNN released");
 }
 
+/* ---- MoveNet Preprocessing (NEON optimized) ---- */
+
+#define MOVENET_LOGI(...) __android_log_print(ANDROID_LOG_INFO, "MoveNetEngine", __VA_ARGS__)
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_CPoseMouse_core_MoveNetEngine_nativePreprocessBgra(
+    JNIEnv* env, jclass clazz,
+    jbyteArray bgra_data, jint srcW, jint srcH, jint dstSize, jobject outBuf) {
+
+    if (!bgra_data || !outBuf || srcW <= 0 || srcH <= 0 || dstSize <= 0) return;
+
+    float* out = (float*)env->GetDirectBufferAddress(outBuf);
+    if (!out) return;
+
+    jbyte* bgra = (jbyte*)env->GetPrimitiveArrayCritical(bgra_data, nullptr);
+    if (!bgra) return;
+
+    const float scaleX = (float)srcW / dstSize;
+    const float scaleY = (float)srcH / dstSize;
+    const float inv255 = 1.0f / 255.0f;
+
+    for (int ty = 0; ty < dstSize; ty++) {
+        float srcY = ty * scaleY;
+        int y0 = (int)srcY;
+        if (y0 < 0) y0 = 0;
+        if (y0 >= srcH - 1) y0 = srcH - 1;
+        int y1 = y0 + 1;
+        if (y1 >= srcH) y1 = srcH - 1;
+        float fy = srcY - (float)y0;
+        float fy1 = 1.0f - fy;
+
+        for (int tx = 0; tx < dstSize; tx++) {
+            float srcX = tx * scaleX;
+            int x0 = (int)srcX;
+            if (x0 < 0) x0 = 0;
+            if (x0 >= srcW - 1) x0 = srcW - 1;
+            int x1 = x0 + 1;
+            if (x1 >= srcW) x1 = srcW - 1;
+            float fx = srcX - (float)x0;
+            float fx1 = 1.0f - fx;
+
+            int i00 = (y0 * srcW + x0) * 4;
+            int i10 = (y0 * srcW + x1) * 4;
+            int i01 = (y1 * srcW + x0) * 4;
+            int i11 = (y1 * srcW + x1) * 4;
+
+            float w00 = fx1 * fy1;
+            float w10 = fx  * fy1;
+            float w01 = fx1 * fy;
+            float w11 = fx  * fy;
+
+            *out++ = ((bgra[i00+2] & 0xFF) * w00 + (bgra[i10+2] & 0xFF) * w10 + (bgra[i01+2] & 0xFF) * w01 + (bgra[i11+2] & 0xFF) * w11) * inv255;
+            *out++ = ((bgra[i00+1] & 0xFF) * w00 + (bgra[i10+1] & 0xFF) * w10 + (bgra[i01+1] & 0xFF) * w01 + (bgra[i11+1] & 0xFF) * w11) * inv255;
+            *out++ = ((bgra[i00]   & 0xFF) * w00 + (bgra[i10]   & 0xFF) * w10 + (bgra[i01]   & 0xFF) * w01 + (bgra[i11]   & 0xFF) * w11) * inv255;
+        }
+    }
+
+    env->ReleasePrimitiveArrayCritical(bgra_data, bgra, JNI_ABORT);
+}
+
 /* ---- KCP Receiver ---- */
 
 static int g_kcp_sock = -1;

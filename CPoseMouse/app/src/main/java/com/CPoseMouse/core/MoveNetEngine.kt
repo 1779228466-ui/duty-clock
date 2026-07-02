@@ -11,9 +11,9 @@ import java.nio.ByteOrder
 import java.nio.MappedByteBuffer
 import java.nio.channels.FileChannel
 
-class MoveNetEngine : InferenceEngine {
+class MoveNetEngine(private val modelVariant: String = "lightning") : InferenceEngine {
 
-    override val name = "MoveNet+OpenCL"
+    override val name = "MoveNet+OpenCL($modelVariant)"
 
     @Volatile private var interpreter: Interpreter? = null
     @Volatile private var gpuDelegate: GpuDelegate? = null
@@ -22,12 +22,33 @@ class MoveNetEngine : InferenceEngine {
     private var logCounter = 0
     private var useGpu = true
 
+    private val inputSize: Int
+    private val modelFile: String
+
+    private var reusableInputBuf: ByteBuffer? = null
+    private var reusableOutputBuf: ByteBuffer? = null
+
+    init {
+        if (modelVariant == "lightning") {
+            inputSize = 192
+            modelFile = "movenet_lightning.tflite"
+        } else {
+            inputSize = 256
+            modelFile = "movenet_thunder.tflite"
+        }
+    }
+
     companion object {
         private const val TAG = "MoveNetEngine"
-        private const val MODEL_INPUT_SIZE = 256
         private const val INPUT_CHANNELS = 3
         private const val KEYPOINT_COUNT = 17
-        private const val MODEL_FILE = "movenet_thunder.tflite"
+
+        init {
+            System.loadLibrary("cposemouse_ncnn")
+        }
+
+        @JvmStatic
+        external fun nativePreprocessBgra(bgraData: ByteArray, srcW: Int, srcH: Int, dstSize: Int, outBuf: ByteBuffer)
     }
 
     private fun loadModelFile(assetManager: AssetManager, filename: String): MappedByteBuffer {
@@ -39,23 +60,35 @@ class MoveNetEngine : InferenceEngine {
         }
     }
 
+    private fun createGpuDelegate(): GpuDelegate {
+        return try {
+            val options = GpuDelegate.Options()
+            options.setInferencePreference(GpuDelegate.Options.INFERENCE_PREFERENCE_SUSTAINED_SPEED)
+            options.setPrecisionLossAllowed(true)
+            GpuDelegate(options)
+        } catch (e: Exception) {
+            AppLog.w(TAG, "GpuDelegate.Options failed, fallback to default: ${e.message}")
+            GpuDelegate()
+        }
+    }
+
     override fun loadModel(context: Context): Boolean {
         try {
-            val delegate = GpuDelegate()
+            val delegate = createGpuDelegate()
             gpuDelegate = delegate
 
-            val modelBuffer = loadModelFile(context.assets, MODEL_FILE)
+            val modelBuffer = loadModelFile(context.assets, modelFile)
             val tfliteOptions = Interpreter.Options().apply {
                 addDelegate(delegate)
-                setNumThreads(4)
             }
             val interp = Interpreter(modelBuffer, tfliteOptions)
             interpreter = interp
 
+            val inTensor = interp.getInputTensor(0)
             val outTensor = interp.getOutputTensor(0)
-            val shape = outTensor.shape()
-            AppLog.i(TAG, "MoveNet GPU model loaded, output shape: ${shape.joinToString("x")}")
+            AppLog.i(TAG, "MoveNet GPU model loaded: ${modelFile} input=${inTensor.shape().joinToString("x")} output=${outTensor.shape().joinToString("x")}")
 
+            initBuffers()
             warmup(interp)
             benchmark(interp, 10)
 
@@ -74,7 +107,7 @@ class MoveNetEngine : InferenceEngine {
 
     private fun tryLoadCpu(context: Context): Boolean {
         try {
-            val modelBuffer = loadModelFile(context.assets, MODEL_FILE)
+            val modelBuffer = loadModelFile(context.assets, modelFile)
             val tfliteOptions = Interpreter.Options().apply {
                 setNumThreads(4)
             }
@@ -82,9 +115,9 @@ class MoveNetEngine : InferenceEngine {
             interpreter = interp
 
             val outTensor = interp.getOutputTensor(0)
-            val shape = outTensor.shape()
-            AppLog.i(TAG, "MoveNet CPU fallback loaded, output shape: ${shape.joinToString("x")}")
+            AppLog.i(TAG, "MoveNet CPU fallback loaded, output shape: ${outTensor.shape().joinToString("x")}")
 
+            initBuffers()
             warmup(interp)
             benchmark(interp, 10)
 
@@ -97,30 +130,36 @@ class MoveNetEngine : InferenceEngine {
         }
     }
 
+    private fun initBuffers() {
+        reusableInputBuf = ByteBuffer.allocateDirect(1 * inputSize * inputSize * INPUT_CHANNELS * 4)
+            .order(ByteOrder.nativeOrder())
+        reusableOutputBuf = ByteBuffer.allocateDirect(1 * 1 * KEYPOINT_COUNT * 3 * 4)
+            .order(ByteOrder.nativeOrder())
+    }
+
     private fun warmup(interp: Interpreter) {
-        val warmupInput = ByteBuffer.allocateDirect(1 * MODEL_INPUT_SIZE * MODEL_INPUT_SIZE * INPUT_CHANNELS * 4)
-        warmupInput.order(ByteOrder.nativeOrder())
-        for (i in 0 until MODEL_INPUT_SIZE * MODEL_INPUT_SIZE * INPUT_CHANNELS) {
-            warmupInput.putInt(128)
+        val inputBuf = reusableInputBuf!!
+        inputBuf.rewind()
+        for (i in 0 until inputSize * inputSize * INPUT_CHANNELS) {
+            inputBuf.putFloat(0.5f)
         }
-        warmupInput.rewind()
+        inputBuf.rewind()
 
-        val outputBuf = ByteBuffer.allocateDirect(1 * 1 * KEYPOINT_COUNT * 3 * 4)
-        outputBuf.order(ByteOrder.nativeOrder())
+        val outputBuf = reusableOutputBuf!!
+        outputBuf.rewind()
 
-        interp.run(warmupInput, outputBuf)
+        interp.run(inputBuf, outputBuf)
         AppLog.i(TAG, "MoveNet warmup done")
     }
 
     private fun benchmark(interp: Interpreter, runs: Int) {
-        val inputBuf = ByteBuffer.allocateDirect(1 * MODEL_INPUT_SIZE * MODEL_INPUT_SIZE * INPUT_CHANNELS * 4)
-        inputBuf.order(ByteOrder.nativeOrder())
-        for (i in 0 until MODEL_INPUT_SIZE * MODEL_INPUT_SIZE * INPUT_CHANNELS) {
-            inputBuf.putInt(128)
+        val inputBuf = reusableInputBuf!!
+        inputBuf.rewind()
+        for (i in 0 until inputSize * inputSize * INPUT_CHANNELS) {
+            inputBuf.putFloat(0.5f)
         }
         inputBuf.rewind()
-        val outputBuf = ByteBuffer.allocateDirect(1 * 1 * KEYPOINT_COUNT * 3 * 4)
-        outputBuf.order(ByteOrder.nativeOrder())
+        val outputBuf = reusableOutputBuf!!
 
         val start = System.nanoTime()
         for (i in 0 until runs) {
@@ -130,71 +169,16 @@ class MoveNetEngine : InferenceEngine {
         }
         val end = System.nanoTime()
         val avgMs = (end - start) / 1e6 / runs
-        AppLog.i(TAG, String.format("MoveNet BENCHMARK: %d runs avg=%.1fms FPS=%.0f GPU=%b", runs, avgMs, 1000.0 / avgMs, useGpu))
+        AppLog.i(TAG, String.format("MoveNet BENCHMARK: %d runs avg=%.1fms FPS=%.0f GPU=%b model=%s", runs, avgMs, 1000.0 / avgMs, useGpu, modelVariant))
     }
 
     private fun preprocessBgra(bgraData: ByteArray, w: Int, h: Int): ByteBuffer {
         require(bgraData.size >= w * h * 4) { "bgraData size ${bgraData.size} < expected ${w * h * 4}" }
 
-        val outBuf = ByteBuffer.allocateDirect(1 * MODEL_INPUT_SIZE * MODEL_INPUT_SIZE * INPUT_CHANNELS * 4)
-        outBuf.order(ByteOrder.nativeOrder())
+        val outBuf = reusableInputBuf!!
+        outBuf.rewind()
 
-        val scaleX = w.toFloat() / MODEL_INPUT_SIZE
-        val scaleY = h.toFloat() / MODEL_INPUT_SIZE
-
-        for (ty in 0 until MODEL_INPUT_SIZE) {
-            for (tx in 0 until MODEL_INPUT_SIZE) {
-                val srcX = tx * scaleX
-                val srcY = ty * scaleY
-
-                val x0 = srcX.toInt().coerceIn(0, w - 1)
-                val y0 = srcY.toInt().coerceIn(0, h - 1)
-                val x1 = (x0 + 1).coerceIn(0, w - 1)
-                val y1 = (y0 + 1).coerceIn(0, h - 1)
-
-                val fracX = srcX - x0
-                val fracY = srcY - y0
-
-                val idx00 = (y0 * w + x0) * 4
-                val idx10 = (y0 * w + x1) * 4
-                val idx01 = (y1 * w + x0) * 4
-                val idx11 = (y1 * w + x1) * 4
-
-                // MoveNet expects RGB order, input is BGRA
-                // Channel 0: R (from BGRA offset 2)
-                val chR = 2
-                val r00 = (bgraData[idx00 + chR].toInt() and 0xFF)
-                val r10 = (bgraData[idx10 + chR].toInt() and 0xFF)
-                val r01 = (bgraData[idx01 + chR].toInt() and 0xFF)
-                val r11 = (bgraData[idx11 + chR].toInt() and 0xFF)
-                val r0 = r00 * (1 - fracX) + r10 * fracX
-                val r1 = r01 * (1 - fracX) + r11 * fracX
-                val r = (r0 * (1 - fracY) + r1 * fracY).toInt()
-                outBuf.putInt(r)
-
-                // Channel 1: G (from BGRA offset 1)
-                val chG = 1
-                val g00 = (bgraData[idx00 + chG].toInt() and 0xFF)
-                val g10 = (bgraData[idx10 + chG].toInt() and 0xFF)
-                val g01 = (bgraData[idx01 + chG].toInt() and 0xFF)
-                val g11 = (bgraData[idx11 + chG].toInt() and 0xFF)
-                val g0 = g00 * (1 - fracX) + g10 * fracX
-                val g1 = g01 * (1 - fracX) + g11 * fracX
-                val g = (g0 * (1 - fracY) + g1 * fracY).toInt()
-                outBuf.putInt(g)
-
-                // Channel 2: B (from BGRA offset 0)
-                val chB = 0
-                val b00 = (bgraData[idx00 + chB].toInt() and 0xFF)
-                val b10 = (bgraData[idx10 + chB].toInt() and 0xFF)
-                val b01 = (bgraData[idx01 + chB].toInt() and 0xFF)
-                val b11 = (bgraData[idx11 + chB].toInt() and 0xFF)
-                val b0 = b00 * (1 - fracX) + b10 * fracX
-                val b1 = b01 * (1 - fracX) + b11 * fracX
-                val b = (b0 * (1 - fracY) + b1 * fracY).toInt()
-                outBuf.putInt(b)
-            }
-        }
+        nativePreprocessBgra(bgraData, w, h, inputSize, outBuf)
 
         outBuf.rewind()
         return outBuf
@@ -202,14 +186,13 @@ class MoveNetEngine : InferenceEngine {
 
     private fun runInference(inputBuf: ByteBuffer): FloatArray {
         val interp = interpreter ?: return FloatArray(0)
-
-        val outputBuf = ByteBuffer.allocateDirect(1 * 1 * KEYPOINT_COUNT * 3 * 4)
-        outputBuf.order(ByteOrder.nativeOrder())
+        val outputBuf = reusableOutputBuf!!
+        outputBuf.rewind()
 
         interp.run(inputBuf, outputBuf)
         outputBuf.rewind()
 
-        val result = FloatArray(1 * 1 * KEYPOINT_COUNT * 3)
+        val result = FloatArray(KEYPOINT_COUNT * 3)
         for (i in result.indices) {
             result[i] = outputBuf.getFloat()
         }
@@ -281,7 +264,7 @@ class MoveNetEngine : InferenceEngine {
 
             logCounter++
             if (logCounter % 30 == 1) {
-                AppLog.i(TAG, String.format("infer=%.1fms GPU=%b", lastInferMsVal, useGpu))
+                AppLog.i(TAG, String.format("infer=%.1fms GPU=%b model=%s", lastInferMsVal, useGpu, modelVariant))
             }
 
             val poses = postprocessMoveNet(rawOutput)
@@ -294,7 +277,7 @@ class MoveNetEngine : InferenceEngine {
 
     override fun isGpuAvailable(): Boolean {
         return try {
-            val delegate = GpuDelegate()
+            val delegate = createGpuDelegate()
             delegate.close()
             true
         } catch (e: Exception) {
@@ -314,7 +297,7 @@ class MoveNetEngine : InferenceEngine {
                     benchmarkRunning = false
                     return@Thread
                 }
-                val bitmap = Bitmap.createBitmap(MODEL_INPUT_SIZE, MODEL_INPUT_SIZE, Bitmap.Config.ARGB_8888)
+                val bitmap = Bitmap.createBitmap(inputSize, inputSize, Bitmap.Config.ARGB_8888)
                 for (i in 0 until 3) detect(bitmap, 0.5f)
                 AppLog.i(TAG, "BENCH_C: start duration=${durationSec}s engine=$name GPU=$useGpu")
 
@@ -351,7 +334,7 @@ class MoveNetEngine : InferenceEngine {
                 bitmap.recycle()
                 val avgMs = if (totalFrames > 0) totalMs / totalFrames else 0.0
                 val fps = if (avgMs > 0) 1000.0 / avgMs else 0.0
-                AppLog.i(TAG, String.format("BENCH_C_DONE: frames=%d avg=%.1fms FPS=%.1f GPU=%b duration=%.1fs", totalFrames, avgMs, fps, useGpu, (System.currentTimeMillis() - startMs) / 1000.0))
+                AppLog.i(TAG, String.format("BENCH_C_DONE: frames=%d avg=%.1fms FPS=%.1f GPU=%b model=%s duration=%.1fs", totalFrames, avgMs, fps, useGpu, modelVariant, (System.currentTimeMillis() - startMs) / 1000.0))
                 release()
             } catch (e: Exception) {
                 AppLog.e(TAG, "BENCH_C: exception", e)
@@ -361,7 +344,7 @@ class MoveNetEngine : InferenceEngine {
         }.start()
     }
 
-    override fun isInferenceFast() = lastInferMsVal < 20.0
+    override fun isInferenceFast() = lastInferMsVal < 15.0
 
     override fun lastInferMs() = lastInferMsVal
 
@@ -370,6 +353,8 @@ class MoveNetEngine : InferenceEngine {
         try { gpuDelegate?.close() } catch (_: Exception) {}
         interpreter = null
         gpuDelegate = null
+        reusableInputBuf = null
+        reusableOutputBuf = null
         loaded = false
         AppLog.i(TAG, "MoveNet engine released")
     }

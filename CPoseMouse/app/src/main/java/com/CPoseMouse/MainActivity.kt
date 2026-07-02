@@ -71,7 +71,7 @@ fun BenchmarkScreen(activity: ComponentActivity) {
     LaunchedEffect(Unit) {
         status = "持续推理中..."
         withContext(Dispatchers.IO) {
-            val movenetEngine = MoveNetEngine()
+            val movenetEngine = MoveNetEngine("lightning")
             try {
                 movenetEngine.benchmarkRunning = true
                 engineName = movenetEngine.name
@@ -104,7 +104,7 @@ fun BenchmarkScreen(activity: ComponentActivity) {
 
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(32.dp)) {
-            Text("MoveNet+OpenCL 持续Benchmark", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color(0xFF555555))
+            Text("MoveNet Lightning+OpenCL 持续Benchmark", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color(0xFF555555))
             Spacer(modifier = Modifier.height(16.dp))
             Text(status, fontSize = 16.sp, color = Color(0xFF7E7E7E))
             if (detail.isNotEmpty()) {
@@ -188,7 +188,7 @@ fun MainApp() {
             serviceIntent.putExtra("resultCode", result.resultCode)
             serviceIntent.putExtra("data", result.data!!)
             serviceIntent.putExtra("engine", engineType)
-            serviceIntent.putExtra("inputSize", 256)
+            serviceIntent.putExtra("inputSize", 192)
             serviceIntent.putExtra("useUdp", useUdpMode)
             context.startForegroundService(serviceIntent)
             isRunning = true; statusText = "服务启动中..."
@@ -299,7 +299,7 @@ fun MonitorScreen(
                             if (useUdpMode) {
                                 val serviceIntent = Intent(context, com.CPoseMouse.service.InferenceService::class.java)
                                 serviceIntent.putExtra("engine", engineType)
-                                serviceIntent.putExtra("inputSize", 256)
+                                serviceIntent.putExtra("inputSize", 192)
                                 serviceIntent.putExtra("useUdp", true)
                                 context.startForegroundService(serviceIntent)
                                 onRunningChange(true); onStatusChange("UDP模式启动中...")
@@ -319,7 +319,7 @@ fun MonitorScreen(
                 Spacer(modifier = Modifier.height(8.dp))
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     StatusBadge("BT", when { btConnected -> "已连接"; hidRegistered -> "未连接"; else -> "未注册" }, btConnected)
-                    TechBadge(if (engineType == "movenet_gpu") "MoveNet+GPU" else "NCNN+CPU")
+                    TechBadge(if (engineType == "movenet_gpu") "Lightning+GPU" else if (engineType == "movenet_thunder") "Thunder+GPU" else "NCNN+CPU")
                     TechBadge(if (useUdpMode) "UDP模式" else "截屏模式")
                 }
                 if (isRunning) { Spacer(modifier = Modifier.height(4.dp)); Text(fpsText, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = textPrimary) }
@@ -344,7 +344,7 @@ fun MonitorScreen(
             Card(modifier = Modifier.fillMaxWidth().weight(1f), colors = CardDefaults.cardColors(containerColor = cardBg), shape = RoundedCornerShape(12.dp), elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)) {
                 Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text("推理引擎", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = textPrimary)
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) { EngineChip("movenet_gpu", "MoveNet+GPU", engineType == "movenet_gpu", onEngineTypeChange); EngineChip("ncnn_cpu", "NCNN+CPU", engineType == "ncnn_cpu", onEngineTypeChange) }
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) { EngineChip("movenet_gpu", "Lightning+GPU", engineType == "movenet_gpu", onEngineTypeChange); EngineChip("movenet_thunder", "Thunder+GPU", engineType == "movenet_thunder", onEngineTypeChange); EngineChip("ncnn_cpu", "NCNN+CPU", engineType == "ncnn_cpu", onEngineTypeChange) }
                     Spacer(modifier = Modifier.height(4.dp))
                     Text("图传模式", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = textPrimary)
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) { SegmentButton("截屏模式", !useUdpMode, { onUdpModeChange(false) }, Modifier.weight(1f)); SegmentButton("OBS+UDP", useUdpMode, { onUdpModeChange(true) }, Modifier.weight(1f)) }

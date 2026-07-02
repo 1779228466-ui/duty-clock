@@ -51,7 +51,7 @@ class InferenceService : Service() {
         }
 
         val engineType = intent?.getStringExtra("engine") ?: "ncnn_cpu"
-        val inputSize = intent?.getIntExtra("inputSize", 256) ?: 256
+        val inputSize = intent?.getIntExtra("inputSize", 192) ?: 192
         val useUdp = intent?.getBooleanExtra("useUdp", false) ?: false
         useUdpMode = useUdp
         startForegroundService()
@@ -234,10 +234,11 @@ class InferenceService : Service() {
 
         fun createEngine(engineType: String, inputSize: Int): InferenceEngine {
             return when (engineType) {
-                "movenet_gpu" -> MoveNetEngine()
+                "movenet_gpu" -> MoveNetEngine("lightning")
+                "movenet_thunder" -> MoveNetEngine("thunder")
                 "ncnn_cpu" -> NcnnEngine(useVulkan = false, inputSize = inputSize)
                 else -> {
-                    val movenet = MoveNetEngine()
+                    val movenet = MoveNetEngine("lightning")
                     if (movenet.isGpuAvailable()) movenet
                     else NcnnEngine(useVulkan = false, inputSize = inputSize)
                 }

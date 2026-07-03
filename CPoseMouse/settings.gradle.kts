@@ -22,5 +22,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "CPoseMouse"
+rootProject.name = "DutyClock"
 include(":app")

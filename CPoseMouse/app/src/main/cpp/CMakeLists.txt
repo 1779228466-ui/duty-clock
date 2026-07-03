@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.22.1)
-project(cposemouse_ncnn)
+project(alarmy_pose)
 
-set(NCNN_VULKAN ON CACHE BOOL "Enable Vulkan GPU compute")
+set(NCNN_VULKAN OFF CACHE BOOL "Enable Vulkan GPU compute")
 
 if(NCNN_VULKAN)
     set(ncnn_DIR ${CMAKE_SOURCE_DIR}/ncnn-20260526-android-vulkan/${ANDROID_ABI}/lib/cmake/ncnn)
@@ -11,7 +11,7 @@ endif()
 
 find_package(ncnn REQUIRED)
 
-add_library(cposemouse_ncnn SHARED cposemouse_ncnn_jni.cpp ikcp.c)
+add_library(cposemouse_ncnn SHARED cposemouse_ncnn_jni.cpp)
 
 if(NCNN_VULKAN)
     target_include_directories(cposemouse_ncnn PRIVATE ${CMAKE_SOURCE_DIR}/ncnn-20260526-android-vulkan/${ANDROID_ABI}/include/ncnn)
@@ -19,7 +19,7 @@ else()
     target_include_directories(cposemouse_ncnn PRIVATE ${CMAKE_SOURCE_DIR}/ncnn-20260526-android/${ANDROID_ABI}/include/ncnn)
 endif()
 
-target_compile_definitions(cposemouse_ncnn PRIVATE NCNN_VULKAN=1)
+target_compile_definitions(cposemouse_ncnn PRIVATE NCNN_VULKAN=0)
 
 target_compile_options(cposemouse_ncnn PRIVATE
     -O3

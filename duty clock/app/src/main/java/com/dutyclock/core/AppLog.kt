@@ -16,7 +16,7 @@ import java.util.Locale
 object AppLog {
     private val _logs = mutableListOf<String>()
     private const val MAX_LOGS = 2000
-    private const val LOG_FILE = "posemouse_log.txt"
+    private const val LOG_FILE = "dutyclock_log.txt"
 
     private val clients = mutableListOf<PrintWriter>()
     private var logServer: ServerSocket? = null

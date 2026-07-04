@@ -1,8 +1,2 @@
 *.zip
 .arts/
-Pousemouse-main.zip
-Pousemouse/local.properties
-CPoseMouse/local.properties
-CPoseMouse/.gradle/
-CPoseMouse/app/build/
-CPoseMouse/build/

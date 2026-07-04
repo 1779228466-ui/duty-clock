@@ -13,7 +13,7 @@ class NcnnEngine(private val useVulkan: Boolean = false, private val inputSize: 
         private const val TAG = "NcnnEngine"
 
         init {
-            System.loadLibrary("cposemouse_ncnn")
+            System.loadLibrary("dutyclock_ncnn")
         }
 
         @JvmStatic

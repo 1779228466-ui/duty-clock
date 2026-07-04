@@ -12,6 +12,15 @@ android {
         }
     }
 
+    signingConfigs {
+        create("dutyRelease") {
+            keyAlias = "dutyclock"
+            keyPassword = "dutyclock123"
+            storeFile = rootProject.file("dutyclock.keystore")
+            storePassword = "dutyclock123"
+        }
+    }
+
     defaultConfig {
         applicationId = "com.dutyclock"
         minSdk = 28
@@ -28,6 +37,8 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = if (rootProject.file("keystore.properties").exists())
+                signingConfigs.getByName("dutyRelease") else null
         }
     }
     compileOptions {

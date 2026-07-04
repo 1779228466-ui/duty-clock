@@ -153,7 +153,7 @@ class DutyAlarmManager private constructor() {
         }
     }
 
-    fun stopRinging() {
+    fun stopRinging(context: Context? = null) {
         try {
             mediaPlayer?.apply {
                 if (isPlaying) stop()
@@ -163,6 +163,8 @@ class DutyAlarmManager private constructor() {
             mediaPlayer = null
         } catch (_: Exception) {}
         releaseWakeLock()
+        // 停止前台服务
+        context?.let { AlarmForegroundService.stop(it) }
         AppLog.i(TAG, "Alarm ringing stopped")
     }
 
@@ -194,11 +196,11 @@ class DutyAlarmManager private constructor() {
 class AlarmReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action == DutyAlarmManager.ALARM_ACTION) {
-            val alarmManager = DutyAlarmManager.getInstance()
-            alarmManager.startRinging(context)
+            // 启动前台服务（负责响铃 + 全屏通知 + 锁屏弹窗）
+            AlarmForegroundService.start(context)
 
+            // 同时启动 MainActivity（前台任务 + 闹钟弹窗）
             val alarmIntent = Intent(context, Class.forName("com.dutyclock.MainActivity")).apply {
-                // 使用 Class.forName 避免循环依赖
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
                 putExtra("alarm_triggered", true)
             }

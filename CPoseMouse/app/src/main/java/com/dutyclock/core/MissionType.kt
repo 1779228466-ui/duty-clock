@@ -1,28 +1,17 @@
 package com.dutyclock.core
 
 /**
- * 闹钟任务类型 - 仿 Alarmy 的多种唤醒任务
+ * 闹钟任务类型
  */
-enum class MissionType(val displayName: String, val description: String, val emoji: String) {
-    SQUAT("深蹲", "完成指定次数的下蹲", "🏋️"),
-    WAVE("挥手", "对着摄像头挥手", "👋"),
-    MATH("数学", "解出数学题才能关闭", "🧮"),
-    MEMORY("记忆", "记住并输入数字序列", "🧠"),
+enum class MissionType(val displayName: String, val description: String, val emoji: String, val isPoseType: Boolean = false) {
+    SQUAT("深蹲", "完成指定次数的下蹲", "🏋️", true),
+    PUSH_UP("俯卧撑", "完成指定次数的俯卧撑", "🤸", true),
+    WAVE("挥手", "对着摄像头挥手", "👋", true),
+    TIESHANKO("铁山靠", "侧身撞击，铁山靠舞步", "🕺", true),
     SHAKE("摇晃", "摇晃手机指定次数", "💪"),
-    STEPS("步行", "走够指定的步数", "🚶"),
-    TYPING("打字", "准确输入显示的短语", "✍️"),
-    PHOTO("拍照", "拍一张指定物品的照片", "📸"),
-    QR_CODE("扫码", "扫描特定的二维码/条码", "🏷️")
-}
-
-/**
- * 任务难度
- */
-enum class MissionDifficulty(val label: String, val multiplier: Float) {
-    EASY("简单", 0.5f),
-    NORMAL("普通", 1.0f),
-    HARD("困难", 1.5f),
-    EXTREME("极限", 2.0f)
+    NUMBER_ORDER("数字排序", "按升序点击数字方块", "🔢"),
+    REACTION("反应测试", "绿灯亮起时快速点击", "⚡"),
+    RANDOM_ACTION("随机动作", "老虎机抽选动作任务", "🎰")
 }
 
 /**
@@ -47,97 +36,27 @@ data class Alarm(
     val label: String = "闹钟",
     val missionType: MissionType = MissionType.SQUAT,
     val missionCount: Int = 10,
-    val difficulty: MissionDifficulty = MissionDifficulty.NORMAL,
     val repeatMode: RepeatMode = RepeatMode.ONCE,
-    val repeatDays: Set<Int> = emptySet(), // 自定义重复: 1=周一..7=周日
+    val repeatDays: Set<Int> = emptySet(), // 1=周一..7=周日
     val vibrate: Boolean = true,
-    val volume: Int = 80, // 0-100
-    val snoozeMinutes: Int = 5, // 贪睡时间
-    val snoozeEnabled: Boolean = true
+    val snoozeMinutes: Int = 5,
+    val ringtoneName: String = "",
+    val ringtoneUri: String = ""
 )
 
 /**
- * 数学任务问题生成
+ * 数字排序题库 — 20轮不同排列
  */
-class MathMission {
-    data class Question(val expression: String, val answer: Int)
-
-    fun generate(difficulty: MissionDifficulty): Question {
-        return when (difficulty) {
-            MissionDifficulty.EASY -> {
-                val a = (1..20).random()
-                val b = (1..20).random()
-                val ops = listOf('+', '-')
-                when (ops.random()) {
-                    '+' -> Question("$a + $b = ?", a + b)
-                    '-' -> Question("${a + b} - $b = ?", a)
-                    else -> Question("$a + $b = ?", a + b)
-                }
-            }
-            MissionDifficulty.NORMAL -> {
-                val a = (10..99).random()
-                val b = (10..99).random()
-                val ops = listOf('+', '-', '×')
-                when (ops.random()) {
-                    '+' -> Question("$a + $b = ?", a + b)
-                    '-' -> Question("${a + b} - $b = ?", a)
-                    '×' -> {
-                        val x = (2..12).random()
-                        val y = (2..9).random()
-                        Question("$x × $y = ?", x * y)
-                    }
-                    else -> Question("$a + $b = ?", a + b)
-                }
-            }
-            MissionDifficulty.HARD -> {
-                val a = (50..200).random()
-                val b = (10..99).random()
-                val c = (1..20).random()
-                Question("$a + $b - $c = ?", a + b - c)
-            }
-            MissionDifficulty.EXTREME -> {
-                val x = (3..15).random()
-                val y = (3..15).random()
-                val z = (10..50).random()
-                Question("$x × $y + $z = ?", x * y + z)
+class NumberOrderGenerator {
+    private val rounds = mutableListOf<List<Int>>()
+    fun nextRound(): List<Int> {
+        if (rounds.isEmpty()) {
+            val base = (1..6).toList()
+            while (rounds.size < 20) {
+                val shuffled = base.shuffled()
+                if (shuffled !in rounds) rounds.add(shuffled)
             }
         }
+        return rounds.removeFirst()
     }
-}
-
-/**
- * 记忆任务生成
- */
-class MemoryMission {
-    data class Sequence(val digits: String)
-
-    fun generate(difficulty: MissionDifficulty): Sequence {
-        val length = when (difficulty) {
-            MissionDifficulty.EASY -> 4
-            MissionDifficulty.NORMAL -> 6
-            MissionDifficulty.HARD -> 8
-            MissionDifficulty.EXTREME -> 10
-        }
-        return Sequence((1..length).map { (0..9).random() }.joinToString(""))
-    }
-}
-
-/**
- * 打字任务短语库
- */
-class TypingMission {
-    private val phrases = listOf(
-        "早安，新的一天开始了",
-        "今天也要加油哦",
-        "早起的鸟儿有虫吃",
-        "一日之计在于晨",
-        "每个早晨都是新的开始",
-        "用最好的状态迎接今天",
-        "Good morning sunshine",
-        "Rise and shine",
-        "Make today amazing",
-        "Wake up and be awesome"
-    )
-
-    fun getRandomPhrase(): String = phrases.random()
 }
